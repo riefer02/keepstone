@@ -1,0 +1,15 @@
+[package]
+name = "keepstone-relay"
+description = "Untrusted federated relay: stores ciphertext chunks only."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+keepstone-core.workspace = true
+thiserror.workspace = true

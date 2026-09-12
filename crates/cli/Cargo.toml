@@ -1,0 +1,25 @@
+[package]
+name = "keepstone-cli"
+description = "Command-line client for Keepstone."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "keepstone"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+keepstone-core.workspace = true
+keepstone-crypto.workspace = true
+keepstone-log.workspace = true
+keepstone-node.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+hex.workspace = true
+rand.workspace = true

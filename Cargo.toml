@@ -1,0 +1,65 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/crypto",
+    "crates/core",
+    "crates/log",
+    "crates/node",
+    "crates/relay",
+    "crates/cli",
+    "xtask",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.85"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/keepstone/keepstone"
+authors = ["Keepstone contributors"]
+
+[workspace.dependencies]
+keepstone-crypto = { path = "crates/crypto", version = "0.0.1" }
+keepstone-core = { path = "crates/core", version = "0.0.1" }
+keepstone-log = { path = "crates/log", version = "0.0.1" }
+keepstone-node = { path = "crates/node", version = "0.0.1" }
+keepstone-relay = { path = "crates/relay", version = "0.0.1" }
+
+thiserror = "1"
+sha2 = "0.10"
+hkdf = "0.12"
+chacha20poly1305 = "0.10"
+zeroize = { version = "1", features = ["derive"] }
+subtle = "2"
+rand = "0.8"
+ed25519-dalek = { version = "2", features = ["rand_core", "zeroize"] }
+x25519-dalek = { version = "2", features = ["static_secrets", "zeroize"] }
+h3o = "0.7"
+hex = "0.4"
+clap = { version = "4", features = ["derive", "env"] }
+anyhow = "1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+rust_2018_idioms = { level = "deny", priority = -1 }
+unreachable_pub = "warn"
+elided_lifetimes_in_paths = "warn"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "allow", priority = -1 }
+nursery = { level = "allow", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+undocumented_unsafe_blocks = "deny"
+missing_safety_doc = "deny"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"

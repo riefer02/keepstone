@@ -1,0 +1,13 @@
+[package]
+name = "xtask"
+description = "Developer task runner for Keepstone (`cargo xtask <task>`)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]

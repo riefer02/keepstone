@@ -1,0 +1,4 @@
+[alias]
+xtask = "run --package xtask --"
+t = "test --workspace"
+cl = "clippy --workspace --all-targets"
