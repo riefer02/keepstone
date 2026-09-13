@@ -14,12 +14,14 @@ the confidentiality guarantee.**
 - **M0 (foundations):** complete — crypto core, canonical encoding, RFC 6962 log, workspace lints + CI.
 - **M1 (local capability drops):** complete — keygen, contacts, chunked encryption, sealed content keys, signed envelopes, transparency log, open/verify.
 - **M2 (networking, in progress):** reference TCP peer protocol (`serve` / `fetch`) for envelope + chunk exchange; recipient tags with decoy padding (recipients are no longer named in cleartext); hashcash-style proof-of-work anti-spam; log equivocation detection. libp2p (QUIC + Noise, gossip + Kademlia) is the next step.
-- **M3+:** witness presence certificates, OpenTimestamps anchoring, federation, clients — see [the plan](docs/ARCHITECTURE.md).
+- **M3 (place-locked, in progress):** Shamir secret sharing over GF(256); witness presence requests/attestations and k-of-n certificates (distinct-witness + expiry checks); custodian share sealing and place-locked reconstruction. Network witness discovery is next.
+- **M4+:** OpenTimestamps anchoring, benchmarks/fuzzing, federation, clients — see [the plan](docs/ARCHITECTURE.md).
 
-The test suite currently passes **49 tests** covering AEAD, sealed boxes,
+The test suite currently passes **64 tests** covering AEAD, sealed boxes,
 chunked streaming encryption, canonical CBOR, signing/verification, H3
-addressing, Merkle inclusion + consistency proofs, the peer protocol, and
-two-node TCP exchange.
+addressing, Merkle inclusion + consistency proofs, the peer protocol,
+two-node TCP exchange, Shamir sharing, presence certificates, and the
+place-locked end-to-end flow.
 
 ## The two locks
 

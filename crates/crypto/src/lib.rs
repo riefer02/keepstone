@@ -20,6 +20,7 @@ pub mod kdf;
 pub mod keys;
 pub mod sealed;
 pub mod secret;
+pub mod shamir;
 pub mod stream;
 pub mod suite;
 
@@ -27,4 +28,5 @@ pub use error::CryptoError;
 pub use keys::{verify, Identity};
 pub use sealed::SealedKey;
 pub use secret::SecretBytes;
+pub use shamir::Share;
 pub use suite::CryptoSuite;

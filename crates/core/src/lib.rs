@@ -15,11 +15,14 @@
 pub mod address;
 pub mod cbor;
 pub mod error;
+pub mod place;
 pub mod pow;
+pub mod presence;
 pub mod types;
 
 pub use address::CellId;
 pub use error::CoreError;
+pub use presence::{PresenceAttestation, PresenceCert, PresenceRequest};
 pub use types::{
     content_root, sha256, signing_input, DropBody, DropId, Mode, SignedDrop, WrappedKey, MIN_TAGS,
     PROTOCOL_VERSION,
