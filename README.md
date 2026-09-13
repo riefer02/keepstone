@@ -17,11 +17,13 @@ the confidentiality guarantee.**
 - **M3 (place-locked, in progress):** Shamir secret sharing over GF(256); witness presence requests/attestations and k-of-n certificates (distinct-witness + expiry checks); custodian share sealing and place-locked reconstruction. Network witness discovery is next.
 - **M4+:** OpenTimestamps anchoring, benchmarks/fuzzing, federation, clients — see [the plan](docs/ARCHITECTURE.md).
 
-The test suite currently passes **64 tests** covering AEAD, sealed boxes,
+The test suite currently passes **76 tests** covering AEAD, sealed boxes,
 chunked streaming encryption, canonical CBOR, signing/verification, H3
 addressing, Merkle inclusion + consistency proofs, the peer protocol,
-two-node TCP exchange, Shamir sharing, presence certificates, and the
-place-locked end-to-end flow.
+two-node TCP exchange, Shamir sharing, presence certificates, the
+place-locked end-to-end flow, and property-based invariants (canonical-encoding
+idempotence, byte-stable envelopes, arbitrary-length chunk round-trips,
+threshold reconstruction).
 
 ## The two locks
 

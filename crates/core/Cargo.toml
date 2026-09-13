@@ -17,3 +17,6 @@ sha2.workspace = true
 h3o.workspace = true
 hex.workspace = true
 zeroize.workspace = true
+
+[dev-dependencies]
+proptest = "1"

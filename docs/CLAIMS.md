@@ -14,7 +14,7 @@ updated as milestones land.
 | Content cannot be truncated or reordered | Chunk count + index bound in the AEAD AAD | ✅ M1 |
 | Flooding costs work | Hashcash-style proof-of-work bound to signer + content | ✅ M2 |
 | Peers can exchange drops | Reference TCP protocol: `serve` / `fetch` envelope + chunks; two-node test + CLI demo | ✅ M2 |
-| It actually works | Multi-chunk (200 KB) round-trip; 64 passing tests | ✅ M3 |
+| It actually works | Multi-chunk (200 KB) round-trip; **76 tests** incl. property tests | ✅ M4 |
 | Only when they're there | k-of-n presence certificates with distinct-witness + expiry checks; place-locked release via Shamir custodians | ✅ M3 (protocol); network witness discovery pending |
 | Secret is unreadable without a threshold of custodians | Shamir 3-of-5 split/combine tests; fewer shares cannot decrypt | ✅ M3 |
 | No company can delete it | Replication across independent nodes/logs | ⏳ M5 |

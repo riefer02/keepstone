@@ -21,3 +21,6 @@ rand.workspace = true
 ed25519-dalek.workspace = true
 x25519-dalek.workspace = true
 hex.workspace = true
+
+[dev-dependencies]
+proptest = "1"

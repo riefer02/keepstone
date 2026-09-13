@@ -14,3 +14,6 @@ workspace = true
 keepstone-crypto.workspace = true
 thiserror.workspace = true
 sha2.workspace = true
+
+[dev-dependencies]
+proptest = "1"
