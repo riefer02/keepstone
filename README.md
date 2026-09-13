@@ -15,7 +15,7 @@ the confidentiality guarantee.**
 - **M1 (local capability drops):** complete — keygen, contacts, chunked encryption, sealed content keys, signed envelopes, transparency log, open/verify.
 - **M2 (networking):** reference TCP peer protocol (`serve` / `fetch`); **libp2p transport** (QUIC + TCP, Noise, identify) with request/response for envelope + chunk exchange (`p2p-serve` / `p2p-fetch`); **gossipsub cell topics** so peers receive drops from unknown authors in dense cells; **Kademlia provider records** for sparse-cell discovery (`/keepstone/kad`); recipient tags with decoy padding; hashcash-style proof-of-work; log equivocation detection.
 - **M3 (place-locked, in progress):** Shamir secret sharing over GF(256); witness presence requests/attestations and k-of-n certificates (distinct-witness + expiry checks); custodian share sealing and place-locked reconstruction. Network witness discovery is next.
-- **M4 (verifiability & hardening):** property-based tests; **external anchoring** of signed tree heads behind an `Anchor` trait (`log-anchor` / `log-anchors`), with a local append-only hash chain and OpenTimestamps as the planned external backend (ADR-0010). Fuzzing and criterion benchmarks are next.
+- **M4 (verifiability & hardening):** property-based tests; **fuzzing** (`cargo-fuzz` harnesses for drop, protocol, and presence decoders — ~30M executions, no crashes); **external anchoring** of signed tree heads behind an `Anchor` trait (`log-anchor` / `log-anchors`); **criterion benchmarks** (`docs/BENCHMARKS.md`).
 - **M5:** federation, multi-device, post-quantum hybrid.
 
 The test suite currently passes **78 tests** covering AEAD, sealed boxes,

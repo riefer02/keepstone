@@ -1,0 +1,38 @@
+[package]
+name = "keepstone-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+keepstone-core = { path = "../crates/core" }
+keepstone-crypto = { path = "../crates/crypto" }
+keepstone-log = { path = "../crates/log" }
+keepstone-node = { path = "../crates/node" }
+
+[workspace]
+
+[[bin]]
+name = "drop_decode"
+path = "fuzz_targets/drop_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "protocol_decode"
+path = "fuzz_targets/protocol_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "presence_decode"
+path = "fuzz_targets/presence_decode.rs"
+test = false
+doc = false
+bench = false
