@@ -7,12 +7,14 @@
 
 use std::sync::{Arc, Mutex};
 
+use keepstone_core::presence::{PresenceAttestation, PresenceRequest};
 use keepstone_core::DropId;
+use keepstone_crypto::Identity;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::protocol::{self, Message, MAX_FRAME, PROTOCOL_VERSION};
-use crate::{MemoryStore, Storage};
+use crate::{Clock, MemoryStore, Storage, SystemClock};
 
 fn io_error(message: &'static str) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::InvalidData, message)
@@ -83,7 +85,12 @@ pub async fn respond(
                     None => send(stream, &Message::Missing(id)).await?,
                 }
             }
-            Message::Bye | Message::Drop(_) | Message::Missing(_) | Message::Chunk(..) => {
+            Message::Bye
+            | Message::Drop(_)
+            | Message::Missing(_)
+            | Message::Chunk(..)
+            | Message::Presence(_)
+            | Message::Attestation(_) => {
                 send(stream, &Message::Bye).await?;
                 break;
             }
@@ -131,6 +138,74 @@ pub async fn fetch_chunk(addr: &str, id: DropId, index: u32) -> std::io::Result<
         Some(Message::Chunk(_, _, data)) => Ok(Some(data)),
         Some(Message::Missing(_)) => Ok(None),
         _ => Err(io_error("unexpected reply")),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Witness presence (M3b)
+// ---------------------------------------------------------------------------
+
+async fn witness_respond(
+    stream: &mut TcpStream,
+    witness: &Identity,
+    cell: &str,
+) -> std::io::Result<()> {
+    while let Some(message) = recv(stream).await? {
+        match message {
+            Message::Hello(version) => send(stream, &Message::Hello(version)).await?,
+            Message::Presence(bytes) => {
+                let Ok(request) = PresenceRequest::from_canonical(&bytes) else {
+                    send(stream, &Message::Bye).await?;
+                    break;
+                };
+                // Best-effort: only attest requests addressed to our cell.
+                if request.cell != cell {
+                    send(stream, &Message::Missing(DropId::of(b"cell"))).await?;
+                    continue;
+                }
+                let attestation =
+                    PresenceAttestation::sign(witness, &request, 0, SystemClock.now_unix());
+                send(stream, &Message::Attestation(attestation.to_canonical())).await?;
+            }
+            Message::Bye => {
+                send(stream, &Message::Bye).await?;
+                break;
+            }
+            _ => {
+                send(stream, &Message::Bye).await?;
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Serve presence attestations for a cell until the task is aborted.
+pub async fn serve_witness(listener: TcpListener, witness: Arc<Identity>, cell: String) {
+    while let Ok((mut stream, _)) = listener.accept().await {
+        let witness = Arc::clone(&witness);
+        let cell = cell.clone();
+        tokio::spawn(async move {
+            let _ = witness_respond(&mut stream, &witness, &cell).await;
+        });
+    }
+}
+
+/// Request a presence attestation from a witness peer.
+///
+/// # Errors
+/// Returns an I/O error on transport failure.
+pub async fn request_presence(
+    addr: &str,
+    request: &PresenceRequest,
+) -> std::io::Result<Option<PresenceAttestation>> {
+    let mut stream = TcpStream::connect(addr).await?;
+    send(&mut stream, &Message::Hello(PROTOCOL_VERSION)).await?;
+    let _ = recv(&mut stream).await?;
+    send(&mut stream, &Message::Presence(request.to_canonical())).await?;
+    match recv(&mut stream).await? {
+        Some(Message::Attestation(bytes)) => Ok(PresenceAttestation::from_canonical(&bytes).ok()),
+        _ => Ok(None),
     }
 }
 

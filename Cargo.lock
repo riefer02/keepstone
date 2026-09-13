@@ -1919,6 +1919,7 @@ name = "keepstone-node"
 version = "0.0.1"
 dependencies = [
  "keepstone-core",
+ "keepstone-crypto",
  "keepstone-log",
  "thiserror 1.0.69",
  "tokio",

@@ -14,7 +14,7 @@ the confidentiality guarantee.**
 - **M0 (foundations):** complete — crypto core, canonical encoding, RFC 6962 log, workspace lints + CI.
 - **M1 (local capability drops):** complete — keygen, contacts, chunked encryption, sealed content keys, signed envelopes, transparency log, open/verify.
 - **M2 (networking):** reference TCP peer protocol (`serve` / `fetch`); **libp2p transport** (QUIC + TCP, Noise, identify) with request/response for envelope + chunk exchange (`p2p-serve` / `p2p-fetch`); **gossipsub cell topics** so peers receive drops from unknown authors in dense cells; **Kademlia provider records** for sparse-cell discovery (`/keepstone/kad`); recipient tags with decoy padding; hashcash-style proof-of-work; log equivocation detection.
-- **M3 (place-locked, in progress):** Shamir secret sharing over GF(256); witness presence requests/attestations and k-of-n certificates (distinct-witness + expiry checks); custodian share sealing and place-locked reconstruction. Network witness discovery is next.
+- **M3 (place-locked, in progress):** Shamir secret sharing over GF(256); witness presence requests/attestations and k-of-n certificates (distinct-witness + expiry checks); **networked witness collection** over the peer protocol (`serve_witness` / `request_presence`); custodian share sealing and place-locked reconstruction.
 - **M4 (verifiability & hardening):** property-based tests; **fuzzing** (`cargo-fuzz` harnesses for drop, protocol, and presence decoders — ~30M executions, no crashes); **external anchoring** of signed tree heads behind an `Anchor` trait (`log-anchor` / `log-anchors`); **criterion benchmarks** (`docs/BENCHMARKS.md`).
 - **M5:** federation, multi-device, post-quantum hybrid.
 
@@ -23,8 +23,8 @@ chunked streaming encryption, canonical CBOR, signing/verification, H3
 addressing, Merkle inclusion + consistency proofs, the peer protocol,
 two-node TCP exchange, **two-node libp2p (QUIC + TCP) exchange**, **gossipsub
 delivery of drops from unknown authors**, **Kademlia cell-provider discovery**,
-Shamir sharing, presence certificates, the place-locked end-to-end flow, and
-property-based invariants.
+**networked presence-certificate collection**, Shamir sharing, the place-locked
+end-to-end flow, and property-based invariants.
 
 ## The two locks
 

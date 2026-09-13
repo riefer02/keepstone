@@ -26,6 +26,8 @@ const TAG_MISSING: u64 = 3;
 const TAG_BYE: u64 = 4;
 const TAG_WANT_CHUNK: u64 = 5;
 const TAG_CHUNK: u64 = 6;
+const TAG_PRESENCE: u64 = 7;
+const TAG_ATTESTATION: u64 = 8;
 
 /// A peer protocol message.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,6 +44,10 @@ pub enum Message {
     WantChunk(DropId, u32),
     /// Reply containing one ciphertext chunk.
     Chunk(DropId, u32, Vec<u8>),
+    /// A presence request (encoded `PresenceRequest`).
+    Presence(Vec<u8>),
+    /// A witness attestation (encoded `PresenceAttestation`).
+    Attestation(Vec<u8>),
     /// Polite close.
     Bye,
 }
@@ -84,6 +90,14 @@ impl Message {
                 payload.extend_from_slice(data);
                 enc.bytes(&payload);
             }
+            Self::Presence(bytes) | Self::Attestation(bytes) => {
+                enc.uint(if matches!(self, Self::Presence(_)) {
+                    TAG_PRESENCE
+                } else {
+                    TAG_ATTESTATION
+                });
+                enc.bytes(bytes);
+            }
             Self::Bye => {
                 enc.uint(TAG_BYE);
                 enc.bytes(&[]);
@@ -121,6 +135,8 @@ impl Message {
                 let (id, index) = id_index_from(payload)?;
                 Ok(Self::Chunk(id, index, payload[36..].to_vec()))
             }
+            TAG_PRESENCE => Ok(Self::Presence(payload.to_vec())),
+            TAG_ATTESTATION => Ok(Self::Attestation(payload.to_vec())),
             TAG_BYE => Ok(Self::Bye),
             _ => Err(NodeError::Protocol("unknown tag")),
         }
@@ -183,6 +199,8 @@ mod tests {
         round_trip(Message::Missing(DropId::of(b"b")));
         round_trip(Message::WantChunk(DropId::of(b"c"), 7));
         round_trip(Message::Chunk(DropId::of(b"d"), 2, vec![9, 8, 7]));
+        round_trip(Message::Presence(vec![1, 2, 3]));
+        round_trip(Message::Attestation(vec![4, 5, 6]));
         round_trip(Message::Bye);
     }
 

@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 keepstone-core.workspace = true
+keepstone-crypto.workspace = true
 keepstone-log.workspace = true
 thiserror.workspace = true
 tokio = { version = "1", features = ["rt", "net", "io-util", "macros", "rt-multi-thread"] }
