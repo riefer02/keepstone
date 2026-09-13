@@ -130,6 +130,19 @@ enum Command {
         /// Drop id (hex).
         id: String,
     },
+    /// Serve drops to peers over libp2p (QUIC + TCP).
+    P2pServe {
+        /// Multiaddr to listen on.
+        #[arg(long, default_value = "/ip4/127.0.0.1/tcp/7778")]
+        listen: String,
+    },
+    /// Fetch a drop and its chunks from a libp2p peer by multiaddr.
+    P2pFetch {
+        /// Peer multiaddr, e.g. `/ip4/127.0.0.1/tcp/7778`.
+        peer: String,
+        /// Drop id (hex).
+        id: String,
+    },
 }
 
 #[tokio::main]
@@ -162,6 +175,8 @@ async fn main() -> Result<()> {
         Command::LogVerify { id } => log_verify(&cli.data_dir, &id),
         Command::Serve { listen } => serve(&cli.data_dir, &listen).await,
         Command::Fetch { peer, id } => fetch(&cli.data_dir, &peer, &id).await,
+        Command::P2pServe { listen } => p2p_serve(&cli.data_dir, &listen).await,
+        Command::P2pFetch { peer, id } => p2p_fetch(&cli.data_dir, &peer, &id).await,
     }
 }
 
@@ -700,5 +715,55 @@ async fn fetch(dir: &Path, peer: &str, id_text: &str) -> Result<()> {
     append_log_entry(dir, &raw).ok();
 
     println!("fetched {id} ({received} chunks) from {peer}");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// libp2p transport (M2b)
+// ---------------------------------------------------------------------------
+
+fn parse_multiaddr(text: &str) -> Result<keepstone_p2p::Multiaddr> {
+    text.parse()
+        .map_err(|_| anyhow!("invalid multiaddr: {text}"))
+}
+
+async fn p2p_serve(dir: &Path, listen: &str) -> Result<()> {
+    let addr = parse_multiaddr(listen)?;
+    let store = Arc::new(Mutex::new(load_store(dir)?));
+    println!("libp2p serving on {listen} (QUIC + TCP, ciphertext only)");
+    keepstone_p2p::serve(addr, store).await?;
+    Ok(())
+}
+
+async fn p2p_fetch(dir: &Path, peer: &str, id_text: &str) -> Result<()> {
+    let addr = parse_multiaddr(peer)?;
+    let id = DropId::from_hex(id_text)?;
+
+    let raw = keepstone_p2p::fetch_drop(addr.clone(), id)
+        .await?
+        .ok_or_else(|| anyhow!("peer does not have drop {id_text}"))?;
+    let signed = SignedDrop::decode(&raw)?;
+    signed.verify().context("peer sent an invalid signature")?;
+    let body = signed.body()?;
+    if !body.pow_ok(&signed.signer) {
+        bail!("peer sent a drop with invalid proof-of-work");
+    }
+
+    fs::create_dir_all(drops_dir(dir)).ok();
+    fs::write(drop_path(dir, &id), &raw).context("writing fetched drop")?;
+    let chunk_dir = chunks_dir(dir, &id);
+    fs::create_dir_all(&chunk_dir).ok();
+
+    let mut received = 0u32;
+    for index in 0..body.chunk_count {
+        let chunk = keepstone_p2p::fetch_chunk(addr.clone(), id, index)
+            .await?
+            .ok_or_else(|| anyhow!("peer is missing chunk {index}"))?;
+        fs::write(chunk_dir.join(format!("{index}.bin")), chunk)?;
+        received += 1;
+    }
+
+    append_log_entry(dir, &raw).ok();
+    println!("fetched {id} ({received} chunks) via libp2p from {peer}");
     Ok(())
 }

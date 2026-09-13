@@ -103,3 +103,18 @@ decoys fail authentication.
 **Consequences.** Recipient count and identity are no longer in the clear, and
 tags are unlinkable across drops. False positives cost a failed AEAD open.
 Larger drops (16 sealed keys) regardless of recipient count.
+
+## ADR-0009 — libp2p as the production transport
+
+**Context.** The plan specifies libp2p/QUIC with Noise. The reference TCP
+transport proved the protocol but lacks transport encryption, QUIC, and future
+gossip/DHT support.
+
+**Decision.** Add a `keepstone-p2p` crate using `libp2p` 0.57 (requires Rust
+1.88) with TCP + QUIC, Noise, Yamux, identify, and a request/response protocol
+whose codec speaks the existing `keepstone-node::protocol` messages. The
+reference TCP transport remains for fast, dependency-light tests.
+
+**Consequences.** Real QUIC + Noise transport and a path to gossipsub/Kademlia.
+Heavier build and a higher MSRV (1.88). Confidentiality is unchanged: the
+transport carries only end-to-end-encrypted ciphertext.

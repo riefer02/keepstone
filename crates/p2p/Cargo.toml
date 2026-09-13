@@ -1,0 +1,28 @@
+[package]
+name = "keepstone-p2p"
+description = "libp2p transport for Keepstone: QUIC/TCP + Noise, request/response drop exchange."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+keepstone-core.workspace = true
+keepstone-node.workspace = true
+thiserror.workspace = true
+futures = "0.3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "io-util", "sync"] }
+libp2p = { version = "0.57", features = [
+    "tokio",
+    "tcp",
+    "quic",
+    "noise",
+    "yamux",
+    "identify",
+    "request-response",
+    "macros",
+] }
