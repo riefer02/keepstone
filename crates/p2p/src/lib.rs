@@ -21,7 +21,7 @@ use futures::StreamExt;
 use libp2p::request_response::{self, ProtocolSupport};
 use libp2p::swarm::SwarmEvent;
 use libp2p::{
-    gossipsub, identify, noise, request_response as rr, tcp, yamux, StreamProtocol, Swarm,
+    gossipsub, identify, kad, noise, request_response as rr, tcp, yamux, StreamProtocol, Swarm,
     SwarmBuilder,
 };
 use thiserror::Error;
@@ -142,6 +142,7 @@ struct Behaviour {
     identify: identify::Behaviour,
     drop: request_response::Behaviour<MessageCodec>,
     gossipsub: gossipsub::Behaviour,
+    kad: kad::Behaviour<kad::store::MemoryStore>,
 }
 
 /// Error type used while constructing the composed behaviour.
@@ -186,10 +187,16 @@ fn build_swarm() -> Result<Swarm<Behaviour>, P2pError> {
                 gossipsub_config,
             )
             .map_err(|e| BehaviourError(e.to_string()))?;
+
+            let peer_id = key.public().to_peer_id();
+            let mut kad = kad::Behaviour::new(peer_id, kad::store::MemoryStore::new(peer_id));
+            kad.set_mode(Some(kad::Mode::Server));
+
             Ok(Behaviour {
                 identify,
                 drop,
                 gossipsub,
+                kad,
             })
         })
         .map_err(|e| P2pError::Transport(e.to_string()))?
@@ -365,6 +372,11 @@ pub async fn serve_cells(
             .gossipsub
             .subscribe(&topic)
             .map_err(|e| P2pError::Transport(e.to_string()))?;
+        // Advertise to the DHT that this node serves the cell (sparse-cell path).
+        let _ = swarm
+            .behaviour_mut()
+            .kad
+            .start_providing(kad::RecordKey::new(&cell.as_bytes()));
     }
     swarm
         .listen_on(listen)
@@ -377,6 +389,19 @@ pub async fn serve_cells(
                 if let Some(sender) = ready.take() {
                     let _ = sender.send(address);
                 }
+            }
+            SwarmEvent::ConnectionEstablished { .. } => {
+                let _ = swarm.behaviour_mut().kad.bootstrap();
+            }
+            SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received {
+                peer_id,
+                info,
+                ..
+            })) => {
+                for addr in info.listen_addrs {
+                    swarm.behaviour_mut().kad.add_address(&peer_id, addr);
+                }
+                let _ = swarm.behaviour_mut().kad.bootstrap();
             }
             SwarmEvent::Behaviour(BehaviourEvent::Drop(request_response::Event::Message {
                 message:
@@ -404,6 +429,65 @@ pub async fn serve_cells(
             }
             _ => {}
         }
+    }
+}
+
+/// Find peers advertising that they serve a cell, via the Kademlia DHT.
+///
+/// This is the sparse-cell path: when no gossip mesh exists, a node asks the
+/// DHT who holds the cell and fetches from the returned peers directly.
+///
+/// # Errors
+/// Returns [`P2pError`] on dial failure. A timeout yields an empty list.
+pub async fn find_providers(peer: Multiaddr, cell: &str) -> Result<Vec<libp2p::PeerId>, P2pError> {
+    let mut swarm = build_swarm()?;
+    swarm
+        .dial(peer)
+        .map_err(|e| P2pError::Transport(e.to_string()))?;
+
+    let key = kad::RecordKey::new(&cell.as_bytes());
+    let mut queried = false;
+
+    let outer =
+        async {
+            loop {
+                match swarm.select_next_some().await {
+                    SwarmEvent::ConnectionEstablished { .. } => {
+                        let _ = swarm.behaviour_mut().kad.bootstrap();
+                    }
+                    SwarmEvent::Behaviour(BehaviourEvent::Identify(
+                        identify::Event::Received { peer_id, info, .. },
+                    )) => {
+                        for addr in info.listen_addrs {
+                            swarm.behaviour_mut().kad.add_address(&peer_id, addr);
+                        }
+                        let _ = swarm.behaviour_mut().kad.bootstrap();
+                        if !queried {
+                            queried = true;
+                            let _ = swarm.behaviour_mut().kad.get_providers(key.clone());
+                        }
+                    }
+                    SwarmEvent::Behaviour(BehaviourEvent::Kad(
+                        kad::Event::OutboundQueryProgressed {
+                            result:
+                                kad::QueryResult::GetProviders(Ok(
+                                    kad::GetProvidersOk::FoundProviders { providers, .. },
+                                )),
+                            ..
+                        },
+                    )) => {
+                        if !providers.is_empty() {
+                            return Ok(providers.into_iter().collect());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        };
+
+    match tokio::time::timeout(Duration::from_secs(15), outer).await {
+        Ok(result) => result,
+        Err(_) => Ok(Vec::new()),
     }
 }
 
