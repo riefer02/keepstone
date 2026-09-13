@@ -12,6 +12,8 @@ use crate::error::CryptoError;
 pub enum CryptoSuite {
     /// X25519 + Ed25519 + XChaCha20-Poly1305 + HKDF-SHA256 + SHA-256.
     Classical25519 = 1,
+    /// X25519 + ML-KEM-768 (hybrid KEM) + Ed25519 + XChaCha20-Poly1305.
+    Hybrid25519MlKem768 = 2,
 }
 
 impl CryptoSuite {
@@ -28,6 +30,7 @@ impl CryptoSuite {
     pub const fn from_id(id: u8) -> Result<Self, CryptoError> {
         match id {
             1 => Ok(Self::Classical25519),
+            2 => Ok(Self::Hybrid25519MlKem768),
             _ => Err(CryptoError::UnsupportedSuite),
         }
     }
@@ -45,8 +48,12 @@ mod tests {
 
     #[test]
     fn round_trips_known_id() {
-        let suite = CryptoSuite::Classical25519;
-        assert_eq!(CryptoSuite::from_id(suite.id()), Ok(suite));
+        for suite in [
+            CryptoSuite::Classical25519,
+            CryptoSuite::Hybrid25519MlKem768,
+        ] {
+            assert_eq!(CryptoSuite::from_id(suite.id()), Ok(suite));
+        }
     }
 
     #[test]

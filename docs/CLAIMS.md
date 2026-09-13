@@ -21,5 +21,5 @@ updated as milestones land.
 | Only when they're there | k-of-n presence certificates with distinct-witness + expiry checks; **networked witness collection**; place-locked release via Shamir custodians | ✅ M3 |
 | Secret is unreadable without a threshold of custodians | Shamir 3-of-5 split/combine tests; fewer shares cannot decrypt | ✅ M3 |
 | No company can delete it | Replication across independent nodes/logs | ⏳ M5 |
-| Resistant to a quantum adversary | Hybrid X25519+ML-KEM / Ed25519+ML-DSA suite | ⏳ M5 |
+| Resistant to a quantum adversary | Hybrid X25519 + ML-KEM-768 key encapsulation; the wrap is secure if **either** primitive holds | ✅ M5 (KEM) |
 | Not audited | — | ⚠️ No independent audit yet |
