@@ -24,7 +24,7 @@ use keepstone_core::{
 };
 use keepstone_crypto::kdf::derive_tag;
 use keepstone_crypto::{stream, CryptoSuite, Identity, SealedKey};
-use keepstone_log::{merkle, SignedTreeHead};
+use keepstone_log::{anchor, merkle, Anchor, SignedTreeHead};
 use keepstone_node::{net, Clock, MemoryStore, Storage, SystemClock};
 use rand::rngs::OsRng;
 use rand::seq::SliceRandom;
@@ -117,6 +117,13 @@ enum Command {
         /// Drop id (hex).
         id: String,
     },
+    /// Anchor the current tree head for a drop into the local anchor chain.
+    LogAnchor {
+        /// Drop id (hex).
+        id: String,
+    },
+    /// Verify the local anchor chain.
+    LogAnchors,
     /// Serve local drops to peers over TCP (reference M2 transport).
     Serve {
         /// Address to listen on.
@@ -173,6 +180,8 @@ async fn main() -> Result<()> {
         Command::DropOpen { id, out } => drop_open(&cli.data_dir, &id, out.as_deref()),
         Command::DropList { lat, lng, ring } => drop_list(&cli.data_dir, lat, lng, ring),
         Command::LogVerify { id } => log_verify(&cli.data_dir, &id),
+        Command::LogAnchor { id } => log_anchor(&cli.data_dir, &id),
+        Command::LogAnchors => log_anchors(&cli.data_dir),
         Command::Serve { listen } => serve(&cli.data_dir, &listen).await,
         Command::Fetch { peer, id } => fetch(&cli.data_dir, &peer, &id).await,
         Command::P2pServe { listen } => p2p_serve(&cli.data_dir, &listen).await,
@@ -626,6 +635,108 @@ fn log_verify(dir: &Path, id_text: &str) -> Result<()> {
     println!("sth:         {}", if sth_ok { "ok" } else { "FAILED" });
     if !included || !sth_ok {
         bail!("verification failed");
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Anchoring (M4): append-only hash chain over signed tree heads
+// ---------------------------------------------------------------------------
+
+fn anchors_path(dir: &Path) -> PathBuf {
+    log_dir(dir).join("anchors.txt")
+}
+
+fn load_receipts(dir: &Path) -> Result<Vec<anchor::AnchorReceipt>> {
+    let text = match fs::read_to_string(anchors_path(dir)) {
+        Ok(text) => text,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let mut receipts = Vec::new();
+    for line in text.lines() {
+        let mut fields = line.split_whitespace();
+        let (Some(size), Some(root), Some(stamp), Some(previous), Some(link)) = (
+            fields.next(),
+            fields.next(),
+            fields.next(),
+            fields.next(),
+            fields.next(),
+        ) else {
+            continue;
+        };
+        receipts.push(anchor::AnchorReceipt {
+            anchor: "local-hashchain".to_owned(),
+            tree_size: size.parse().context("anchor tree size")?,
+            root: hex32(root)?,
+            anchored_at: stamp.parse().context("anchor timestamp")?,
+            previous: hex32(previous)?,
+            link: hex32(link)?,
+        });
+    }
+    Ok(receipts)
+}
+
+fn save_receipts(dir: &Path, receipts: &[anchor::AnchorReceipt]) -> Result<()> {
+    fs::create_dir_all(log_dir(dir)).ok();
+    let mut text = String::new();
+    for receipt in receipts {
+        text.push_str(&format!(
+            "{} {} {} {} {}\n",
+            receipt.tree_size,
+            hex::encode(receipt.root),
+            receipt.anchored_at,
+            hex::encode(receipt.previous),
+            hex::encode(receipt.link)
+        ));
+    }
+    fs::write(anchors_path(dir), text).context("writing anchors")?;
+    Ok(())
+}
+
+fn log_anchor(dir: &Path, id_text: &str) -> Result<()> {
+    let id = DropId::from_hex(id_text)?;
+    let entries = load_log_entries(dir)?;
+    let leaves: Vec<merkle::Hash> = entries.iter().map(|e| merkle::leaf_hash(e)).collect();
+    if !entries.iter().any(|e| sha256(e) == *id.as_bytes()) {
+        bail!("drop is not present in the local log");
+    }
+    let tree_size = u64::try_from(leaves.len())?;
+    let root = merkle::mth(&leaves);
+    let log = log_identity(dir)?;
+    let sth = SignedTreeHead::sign(&log, tree_size, root, SystemClock.now_unix());
+    sth.verify().context("tree head invalid")?;
+
+    let mut receipts = load_receipts(dir)?;
+    let links: Vec<[u8; 32]> = receipts.iter().map(|r| r.link).collect();
+    let mut chain = anchor::HashChainAnchor::from_links(links);
+    let receipt = chain.submit(sth.tree_size, &sth.root, sth.timestamp);
+    receipts.push(receipt.clone());
+    save_receipts(dir, &receipts)?;
+
+    println!("anchored");
+    println!("  drop:      {id}");
+    println!("  tree size: {}", receipt.tree_size);
+    println!("  root:      {}", hex::encode(receipt.root));
+    println!("  anchor:    {}", receipt.anchor);
+    println!("  link:      {}", hex::encode(receipt.link));
+    println!("  anchors:   {}", receipts.len());
+    Ok(())
+}
+
+fn log_anchors(dir: &Path) -> Result<()> {
+    let receipts = load_receipts(dir)?;
+    if receipts.is_empty() {
+        println!("(no anchors)");
+        return Ok(());
+    }
+    let ok = anchor::verify_receipts(&receipts);
+    println!("anchors:     {}", receipts.len());
+    println!("chain:       {}", if ok { "ok" } else { "FAILED" });
+    if let Some(last) = receipts.last() {
+        println!("latest link: {}", hex::encode(last.link));
+    }
+    if !ok {
+        bail!("anchor chain verification failed");
     }
     Ok(())
 }

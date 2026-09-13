@@ -6,9 +6,11 @@
 #![forbid(unsafe_code)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+pub mod anchor;
 pub mod merkle;
 pub mod sth;
 
+pub use anchor::{Anchor, AnchorReceipt, HashChainAnchor};
 pub use merkle::{mth, Hash};
 pub use sth::{detect_equivocation, SignedTreeHead};
 

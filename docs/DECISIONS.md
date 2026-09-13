@@ -118,3 +118,20 @@ reference TCP transport remains for fast, dependency-light tests.
 **Consequences.** Real QUIC + Noise transport and a path to gossipsub/Kademlia.
 Heavier build and a higher MSRV (1.88). Confidentiality is unchanged: the
 transport carries only end-to-end-encrypted ciphertext.
+
+## ADR-0010 — Anchoring behind a trait; local hash chain first
+
+**Context.** The plan commits to OpenTimestamps (D6) but notes the Rust OTS
+ecosystem is thin. On crates.io, `opentimestamps` is 0.2.0 and supports parsing
+and verifying `.ots` files — it does not submit to calendar servers, and
+verification needs Bitcoin block headers.
+
+**Decision.** Introduce an `Anchor` trait in `keepstone-log` and ship a
+dependency-free `HashChainAnchor` that commits signed tree heads into a locally
+verifiable append-only chain. The CLI persists and verifies this chain
+(`log-anchor`, `log-anchors`). OpenTimestamps plugs in behind the same trait
+once a suitable crate exists.
+
+**Consequences.** Real, testable, offline anchoring today with no new
+dependencies. It provides tamper-evidence but not a third-party timestamp until
+an external backend is added; the trait boundary keeps that a drop-in change.
