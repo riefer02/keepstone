@@ -13,17 +13,16 @@ the confidentiality guarantee.**
 
 - **M0 (foundations):** complete — crypto core, canonical encoding, RFC 6962 log, workspace lints + CI.
 - **M1 (local capability drops):** complete — keygen, contacts, chunked encryption, sealed content keys, signed envelopes, transparency log, open/verify.
-- **M2 (networking, in progress):** reference TCP peer protocol (`serve` / `fetch`); **libp2p transport** (QUIC + TCP, Noise, identify) with a request/response protocol for envelope + chunk exchange (`p2p-serve` / `p2p-fetch`); recipient tags with decoy padding (recipients are no longer named in cleartext); hashcash-style proof-of-work anti-spam; log equivocation detection. Gossipsub and Kademlia are next.
+- **M2 (networking):** reference TCP peer protocol (`serve` / `fetch`); **libp2p transport** (QUIC + TCP, Noise, identify) with request/response for envelope + chunk exchange (`p2p-serve` / `p2p-fetch`); **gossipsub cell topics** so peers receive drops from unknown authors in dense cells; recipient tags with decoy padding; hashcash-style proof-of-work; log equivocation detection. Kademlia (sparse-cell discovery) is next.
 - **M3 (place-locked, in progress):** Shamir secret sharing over GF(256); witness presence requests/attestations and k-of-n certificates (distinct-witness + expiry checks); custodian share sealing and place-locked reconstruction. Network witness discovery is next.
 - **M4+:** OpenTimestamps anchoring, benchmarks/fuzzing, federation, clients — see [the plan](docs/ARCHITECTURE.md).
 
-The test suite currently passes **77 tests** covering AEAD, sealed boxes,
+The test suite currently passes **78 tests** covering AEAD, sealed boxes,
 chunked streaming encryption, canonical CBOR, signing/verification, H3
 addressing, Merkle inclusion + consistency proofs, the peer protocol,
-two-node TCP exchange, **two-node libp2p (QUIC + TCP) exchange**, Shamir
-sharing, presence certificates, the place-locked end-to-end flow, and
-property-based invariants (canonical-encoding idempotence, byte-stable
-envelopes, arbitrary-length chunk round-trips, threshold reconstruction).
+two-node TCP exchange, **two-node libp2p (QUIC + TCP) exchange**, **gossipsub
+delivery of drops from unknown authors**, Shamir sharing, presence
+certificates, the place-locked end-to-end flow, and property-based invariants.
 
 ## The two locks
 

@@ -24,5 +24,9 @@ libp2p = { version = "0.57", features = [
     "yamux",
     "identify",
     "request-response",
+    "gossipsub",
     "macros",
 ] }
+
+[dev-dependencies]
+keepstone-crypto.workspace = true

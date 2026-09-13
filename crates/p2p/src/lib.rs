@@ -21,16 +21,23 @@ use futures::StreamExt;
 use libp2p::request_response::{self, ProtocolSupport};
 use libp2p::swarm::SwarmEvent;
 use libp2p::{
-    identify, noise, request_response as rr, tcp, yamux, StreamProtocol, Swarm, SwarmBuilder,
+    gossipsub, identify, noise, request_response as rr, tcp, yamux, StreamProtocol, Swarm,
+    SwarmBuilder,
 };
 use thiserror::Error;
 
-use keepstone_core::DropId;
+use keepstone_core::{DropId, SignedDrop};
 use keepstone_node::protocol::{Message, MAX_FRAME};
 use keepstone_node::{MemoryStore, Storage};
 
 /// The request/response protocol identifier.
 pub const DROP_PROTOCOL: &str = "/keepstone/drop/1";
+
+/// The gossipsub topic for a cell.
+#[must_use]
+pub fn cell_topic(cell: &str) -> String {
+    format!("keepstone/drops/v1/cell/{cell}")
+}
 
 pub use libp2p::Multiaddr;
 
@@ -134,7 +141,20 @@ impl request_response::Codec for MessageCodec {
 struct Behaviour {
     identify: identify::Behaviour,
     drop: request_response::Behaviour<MessageCodec>,
+    gossipsub: gossipsub::Behaviour,
 }
+
+/// Error type used while constructing the composed behaviour.
+#[derive(Debug)]
+struct BehaviourError(String);
+
+impl std::fmt::Display for BehaviourError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for BehaviourError {}
 
 fn build_swarm() -> Result<Swarm<Behaviour>, P2pError> {
     let swarm = SwarmBuilder::with_new_identity()
@@ -156,7 +176,21 @@ fn build_swarm() -> Result<Swarm<Behaviour>, P2pError> {
                 [(StreamProtocol::new(DROP_PROTOCOL), ProtocolSupport::Full)].into_iter(),
                 request_response::Config::default().with_request_timeout(Duration::from_secs(15)),
             );
-            Ok(Behaviour { identify, drop })
+            let gossipsub_config = gossipsub::ConfigBuilder::default()
+                .max_transmit_size(MAX_FRAME)
+                .validation_mode(gossipsub::ValidationMode::Strict)
+                .build()
+                .map_err(|e| BehaviourError(e.to_string()))?;
+            let gossipsub = gossipsub::Behaviour::new(
+                gossipsub::MessageAuthenticity::Signed(key.clone()),
+                gossipsub_config,
+            )
+            .map_err(|e| BehaviourError(e.to_string()))?;
+            Ok(Behaviour {
+                identify,
+                drop,
+                gossipsub,
+            })
         })
         .map_err(|e| P2pError::Transport(e.to_string()))?
         .build();
@@ -302,4 +336,113 @@ pub async fn fetch_chunk(
         Message::Missing(_) => Ok(None),
         _ => Err(P2pError::Protocol),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Gossipsub: dense-cell push delivery of "unknown" drops
+// ---------------------------------------------------------------------------
+
+/// Serve request/response **and** subscribe to cell topics, storing any valid
+/// drop that arrives over gossip.
+///
+/// This is the dense-cell path: a subscriber receives drops from authors it has
+/// never met, as long as both are in the same cell topic's mesh. Each received
+/// drop is signature-verified before it is stored.
+///
+/// # Errors
+/// Returns [`P2pError`] if the listener cannot be started.
+pub async fn serve_cells(
+    listen: Multiaddr,
+    store: Arc<Mutex<MemoryStore>>,
+    cells: Vec<String>,
+    ready: Option<tokio::sync::oneshot::Sender<Multiaddr>>,
+) -> Result<(), P2pError> {
+    let mut swarm = build_swarm()?;
+    for cell in &cells {
+        let topic = gossipsub::IdentTopic::new(cell_topic(cell));
+        swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&topic)
+            .map_err(|e| P2pError::Transport(e.to_string()))?;
+    }
+    swarm
+        .listen_on(listen)
+        .map_err(|e| P2pError::Transport(e.to_string()))?;
+
+    let mut ready = ready;
+    loop {
+        match swarm.select_next_some().await {
+            SwarmEvent::NewListenAddr { address, .. } => {
+                if let Some(sender) = ready.take() {
+                    let _ = sender.send(address);
+                }
+            }
+            SwarmEvent::Behaviour(BehaviourEvent::Drop(request_response::Event::Message {
+                message:
+                    rr::Message::Request {
+                        request, channel, ..
+                    },
+                ..
+            })) => {
+                let response = respond(&store, request);
+                let _ = swarm.behaviour_mut().drop.send_response(channel, response);
+            }
+            SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
+                message,
+                ..
+            })) => {
+                // Store only drops that verify; gossip is untrusted transport.
+                if let Ok(signed) = SignedDrop::decode(&message.data) {
+                    if signed.verify().is_ok() {
+                        let id = signed.id();
+                        if let Ok(mut guard) = store.lock() {
+                            guard.put_drop(id, message.data.clone());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+async fn settle(swarm: &mut Swarm<Behaviour>, duration: Duration) {
+    let _ = tokio::time::timeout(duration, async {
+        loop {
+            swarm.select_next_some().await;
+        }
+    })
+    .await;
+}
+
+/// Publish a signed drop envelope to a cell topic ("unknown drop" delivery).
+///
+/// # Errors
+/// Returns [`P2pError`] on dial or publish failure.
+pub async fn gossip_publish(peer: Multiaddr, cell: &str, payload: Vec<u8>) -> Result<(), P2pError> {
+    let mut swarm = build_swarm()?;
+    let topic = gossipsub::IdentTopic::new(cell_topic(cell));
+    swarm
+        .behaviour_mut()
+        .gossipsub
+        .subscribe(&topic)
+        .map_err(|e| P2pError::Transport(e.to_string()))?;
+    swarm
+        .dial(peer)
+        .map_err(|e| P2pError::Transport(e.to_string()))?;
+
+    loop {
+        if let SwarmEvent::ConnectionEstablished { .. } = swarm.select_next_some().await {
+            break;
+        }
+    }
+    settle(&mut swarm, Duration::from_millis(500)).await;
+    swarm
+        .behaviour_mut()
+        .gossipsub
+        .publish(topic, payload)
+        .map_err(|e| P2pError::Transport(format!("publish: {e:?}")))?;
+    settle(&mut swarm, Duration::from_millis(750)).await;
+    Ok(())
 }
