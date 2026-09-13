@@ -1,6 +1,6 @@
 [package]
 name = "keepstone-node"
-description = "Node traits and in-memory implementations for Keepstone (storage, clock, transport)."
+description = "Node traits, wire protocol, and a reference TCP transport for Keepstone."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,3 +14,4 @@ workspace = true
 keepstone-core.workspace = true
 keepstone-log.workspace = true
 thiserror.workspace = true
+tokio = { version = "1", features = ["rt", "net", "io-util", "macros", "rt-multi-thread"] }

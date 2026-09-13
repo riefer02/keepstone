@@ -43,8 +43,9 @@ binary over the libraries.
 ## Milestones
 
 - **M0/M1 (done):** pure crypto/core/log, local capability drops, CLI.
-- **M2:** libp2p transport (QUIC + TCP), gossipsub for dense cells, Kademlia
-  request/response for sparse cells, log nodes + STH gossip.
+- **M2 (in progress):** reference TCP peer protocol (`serve`/`fetch`), recipient
+  tags + decoys, proof-of-work, equivocation detection. libp2p (QUIC + TCP,
+  gossipsub + Kademlia) replaces the reference transport next.
 - **M3:** witness presence certificates and place-locked drops.
 - **M4:** OpenTimestamps anchoring, map UI, benchmarks, fuzzing, docs.
 - **M5:** federated relays, multi-device, post-quantum hybrid suite.

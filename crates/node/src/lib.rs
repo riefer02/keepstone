@@ -1,9 +1,9 @@
-//! Node abstractions: clock, storage, and delivery traits.
+//! Node abstractions: clock, storage, wire protocol, and a reference transport.
 //!
 //! This crate is where I/O is allowed. `core`, `crypto`, and `log` stay pure so
-//! they remain deterministic and easy to test. Concrete transports (libp2p) and
-//! persistent storage arrive in M2; here we define the seams and provide
-//! in-memory implementations for tests.
+//! they remain deterministic and easy to test. The reference TCP transport is
+//! transport-agnostic at the protocol level; libp2p arrives in M2b behind the
+//! same messages.
 #![forbid(unsafe_code)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
@@ -12,12 +12,18 @@ use std::collections::HashMap;
 use keepstone_core::DropId;
 use thiserror::Error;
 
+pub mod net;
+pub mod protocol;
+
 /// Errors from node operations.
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq, Eq)]
 pub enum NodeError {
     /// The requested item was not found.
     #[error("not found")]
     NotFound,
+    /// The peer protocol was violated.
+    #[error("protocol: {0}")]
+    Protocol(&'static str),
 }
 
 /// A source of wall-clock time. Injected so tests are deterministic.

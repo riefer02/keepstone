@@ -62,6 +62,17 @@ impl SignedTreeHead {
     }
 }
 
+/// Whether two signed tree heads from the same log equivocate.
+///
+/// Equivocation is two different roots at the **same tree size**. Detecting it
+/// is how clients catch a log that shows different histories to different
+/// people. Returns `false` for consistent STHs (including one being a proper
+/// prefix of the other, which is covered by consistency proofs).
+#[must_use]
+pub fn detect_equivocation(a: &SignedTreeHead, b: &SignedTreeHead) -> bool {
+    a.tree_size == b.tree_size && a.root != b.root
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,5 +93,19 @@ mod tests {
         let mut bad = sth;
         bad.tree_size = 2;
         assert!(bad.verify().is_err());
+    }
+
+    #[test]
+    fn equivocation_is_detected() {
+        let log = Identity::generate();
+        let a = SignedTreeHead::sign(&log, 3, [1u8; 32], 1);
+        let b = SignedTreeHead::sign(&log, 3, [2u8; 32], 2);
+        assert!(detect_equivocation(&a, &b));
+        // Same root at the same size is not equivocation.
+        let c = SignedTreeHead::sign(&log, 3, [1u8; 32], 3);
+        assert!(!detect_equivocation(&a, &c));
+        // Different sizes are not equivocation (consistency applies instead).
+        let d = SignedTreeHead::sign(&log, 4, [1u8; 32], 4);
+        assert!(!detect_equivocation(&a, &d));
     }
 }

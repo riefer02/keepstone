@@ -74,3 +74,32 @@ abuse, and simplifies the protocol. Requires out-of-band coordination.
 
 **Consequences.** CI stays meaningful and green; style-level suggestions are not
 enforced. Revisit if the codebase stabilizes and we want stricter style lints.
+
+## ADR-0007 — Reference TCP transport before libp2p
+
+**Context.** M2 needs two-node delivery, sparse-cell request/response, and
+chunk transfer. The plan specifies libp2p (QUIC + TCP, gossipsub + Kademlia),
+which carries significant API surface and build weight.
+
+**Decision.** Implement the peer protocol transport-agnostically
+(`keepstone-node::protocol`) and ship a small reference TCP transport
+(`keepstone-node::net`) first. libp2p slots in behind the same messages.
+
+**Consequences.** Faster, testable delivery today with no new cryptographic
+assumptions (content is already end-to-end encrypted). Transport-level
+encryption, gossipsub, Kademlia, and NAT traversal still require libp2p and
+remain M2 work.
+
+## ADR-0008 — Recipient tags with decoy padding
+
+**Context.** Naming recipient X25519 keys in the drop body leaks who a drop is
+for to anyone who fetches the ciphertext.
+
+**Decision.** Replace recipient keys with an 8-byte tag
+`HKDF(recipient_public, drop_nonce)` and pad every drop to `MIN_TAGS` (16)
+entries with random decoys. Recipients match their tag and attempt to unseal;
+decoys fail authentication.
+
+**Consequences.** Recipient count and identity are no longer in the clear, and
+tags are unlinkable across drops. False positives cost a failed AEAD open.
+Larger drops (16 sealed keys) regardless of recipient count.

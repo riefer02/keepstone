@@ -13,11 +13,13 @@ the confidentiality guarantee.**
 
 - **M0 (foundations):** complete — crypto core, canonical encoding, RFC 6962 log, workspace lints + CI.
 - **M1 (local capability drops):** complete — keygen, contacts, chunked encryption, sealed content keys, signed envelopes, transparency log, open/verify.
-- **M2+:** networking, presence, federation, clients — see [the plan](docs/ARCHITECTURE.md).
+- **M2 (networking, in progress):** reference TCP peer protocol (`serve` / `fetch`) for envelope + chunk exchange; recipient tags with decoy padding (recipients are no longer named in cleartext); hashcash-style proof-of-work anti-spam; log equivocation detection. libp2p (QUIC + Noise, gossip + Kademlia) is the next step.
+- **M3+:** witness presence certificates, OpenTimestamps anchoring, federation, clients — see [the plan](docs/ARCHITECTURE.md).
 
-The test suite currently passes **40 tests** covering AEAD, sealed boxes,
+The test suite currently passes **49 tests** covering AEAD, sealed boxes,
 chunked streaming encryption, canonical CBOR, signing/verification, H3
-addressing, and Merkle inclusion + consistency proofs.
+addressing, Merkle inclusion + consistency proofs, the peer protocol, and
+two-node TCP exchange.
 
 ## The two locks
 
@@ -64,6 +66,18 @@ keepstone --data-dir ./demo/alice log-verify <id>
 
 # Bob opens it (once he has the ciphertext).
 keepstone --data-dir ./demo/bob drop-open <id>
+```
+
+### Two-node exchange over TCP (M2 reference transport)
+
+```bash
+# Alice serves the drops she holds (ciphertext only).
+keepstone --data-dir ./demo/alice serve --listen 127.0.0.1:7777
+
+# Bob fetches the envelope and its chunks, then opens it.
+keepstone --data-dir ./demo/bob fetch 127.0.0.1:7777 <id>
+keepstone --data-dir ./demo/bob drop-open <id>
+keepstone --data-dir ./demo/bob log-verify <id>
 ```
 
 Run the full local quality gate with `cargo xtask ci`.

@@ -7,12 +7,19 @@ use sha2::{Digest, Sha256};
 
 use crate::cbor::{Decoder, Encoder};
 use crate::error::CoreError;
+use crate::pow;
 
 /// Current protocol version.
 pub const PROTOCOL_VERSION: u8 = 1;
 
 /// Signing context (domain separation) for drop envelopes.
 pub const DROP_CONTEXT: &[u8] = b"keepstone/v1/drop";
+
+/// Minimum number of recipient tag slots per drop (real + decoys).
+///
+/// Padding to a fixed count hides the true number of recipients and creates
+/// false positives for anyone trying to match tags.
+pub const MIN_TAGS: usize = 16;
 
 /// Compute SHA-256 over `data`.
 #[must_use]
@@ -135,11 +142,15 @@ impl Mode {
     }
 }
 
-/// A content key sealed to one recipient device.
+/// A content key sealed to one recipient, located by a short tag.
+///
+/// The drop does **not** name the recipient in the clear. The recipient derives
+/// the tag from their own public key and the drop's `drop_nonce`, and attempts
+/// to open any matching entry. Decoy entries create false positives.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WrappedKey {
-    /// Recipient's X25519 public key.
-    pub recipient: [u8; 32],
+    /// `HKDF(recipient_x25519_public, drop_nonce)` truncated to 8 bytes.
+    pub tag: [u8; 8],
     /// The sealed content key.
     pub sealed: SealedKey,
 }
@@ -169,7 +180,11 @@ pub struct DropBody {
     pub content_root: [u8; 32],
     /// Nonce prefix for chunk encryption.
     pub prefix: [u8; 20],
-    /// Content keys sealed to recipients.
+    /// Per-drop nonce used to derive recipient tags.
+    pub drop_nonce: [u8; 16],
+    /// Proof-of-work nonce.
+    pub pow_nonce: u64,
+    /// Tagged, sealed content keys (real + decoys).
     pub wrapped_keys: Vec<WrappedKey>,
 }
 
@@ -178,7 +193,7 @@ impl DropBody {
     #[must_use]
     pub fn to_canonical(&self) -> Vec<u8> {
         let mut enc = Encoder::new();
-        enc.array(12);
+        enc.array(14);
         enc.uint(u64::from(self.version));
         enc.uint(u64::from(self.suite));
         enc.text(&self.cell);
@@ -190,10 +205,12 @@ impl DropBody {
         enc.uint(u64::from(self.chunk_count));
         enc.bytes(&self.content_root);
         enc.bytes(&self.prefix);
+        enc.bytes(&self.drop_nonce);
+        enc.uint(self.pow_nonce);
         enc.array(self.wrapped_keys.len());
         for wrapped in &self.wrapped_keys {
             enc.array(4);
-            enc.bytes(&wrapped.recipient);
+            enc.bytes(&wrapped.tag);
             enc.bytes(&wrapped.sealed.ephemeral_public);
             enc.bytes(&wrapped.sealed.nonce);
             enc.bytes(&wrapped.sealed.ciphertext);
@@ -207,7 +224,7 @@ impl DropBody {
     /// Returns [`CoreError::Cbor`] on malformed or non-canonical input.
     pub fn from_canonical(bytes: &[u8]) -> Result<Self, CoreError> {
         let mut dec = Decoder::new(bytes);
-        if dec.array()? != 12 {
+        if dec.array()? != 14 {
             return Err(CoreError::Cbor("drop body arity"));
         }
         let version = u8::try_from(dec.uint()?).map_err(|_| CoreError::Cbor("version"))?;
@@ -221,18 +238,20 @@ impl DropBody {
         let chunk_count = u32::try_from(dec.uint()?).map_err(|_| CoreError::Cbor("chunk_count"))?;
         let content_root = dec.bytes_fixed::<32>()?;
         let prefix = dec.bytes_fixed::<20>()?;
+        let drop_nonce = dec.bytes_fixed::<16>()?;
+        let pow_nonce = dec.uint()?;
         let wrapped_count = dec.array()?;
         let mut wrapped_keys = Vec::with_capacity(wrapped_count);
         for _ in 0..wrapped_count {
             if dec.array()? != 4 {
                 return Err(CoreError::Cbor("wrapped key arity"));
             }
-            let recipient = dec.bytes_fixed::<32>()?;
+            let tag = dec.bytes_fixed::<8>()?;
             let ephemeral_public = dec.bytes_fixed::<32>()?;
             let nonce = dec.bytes_fixed::<24>()?;
             let ciphertext = dec.bytes()?.to_vec();
             wrapped_keys.push(WrappedKey {
-                recipient,
+                tag,
                 sealed: SealedKey {
                     ephemeral_public,
                     nonce,
@@ -253,8 +272,16 @@ impl DropBody {
             chunk_count,
             content_root,
             prefix,
+            drop_nonce,
+            pow_nonce,
             wrapped_keys,
         })
+    }
+
+    /// Check the proof-of-work bound to `signer`.
+    #[must_use]
+    pub fn pow_ok(&self, signer: &[u8; 32]) -> bool {
+        pow::is_valid(signer, &self.content_root, &self.drop_nonce, self.pow_nonce)
     }
 }
 
@@ -396,6 +423,8 @@ mod tests {
             chunk_count: 1,
             content_root: [9u8; 32],
             prefix: [7u8; 20],
+            drop_nonce: [5u8; 16],
+            pow_nonce: 0,
             wrapped_keys: vec![],
         }
     }
@@ -433,5 +462,16 @@ mod tests {
         let a = vec![vec![1u8, 2, 3], vec![4u8, 5]];
         let b = vec![vec![4u8, 5], vec![1u8, 2, 3]];
         assert_ne!(content_root(&a), content_root(&b));
+    }
+
+    #[test]
+    fn pow_binds_to_signer() {
+        let signer = [3u8; 32];
+        let body = sample_body();
+        let nonce = pow::mine(&signer, &body.content_root, &body.drop_nonce);
+        let mut mined = body;
+        mined.pow_nonce = nonce;
+        assert!(mined.pow_ok(&signer));
+        assert!(!mined.pow_ok(&[4u8; 32]));
     }
 }

@@ -10,7 +10,7 @@ pub mod merkle;
 pub mod sth;
 
 pub use merkle::{mth, Hash};
-pub use sth::SignedTreeHead;
+pub use sth::{detect_equivocation, SignedTreeHead};
 
 use thiserror::Error;
 

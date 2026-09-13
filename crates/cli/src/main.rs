@@ -19,13 +19,17 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 use keepstone_core::{
-    content_root, sha256, CellId, DropBody, DropId, Mode, SignedDrop, PROTOCOL_VERSION,
+    content_root, sha256, CellId, DropBody, DropId, Mode, SignedDrop, WrappedKey, MIN_TAGS,
+    PROTOCOL_VERSION,
 };
+use keepstone_crypto::kdf::derive_tag;
 use keepstone_crypto::{stream, CryptoSuite, Identity, SealedKey};
 use keepstone_log::{merkle, SignedTreeHead};
-use keepstone_node::{Clock, SystemClock};
+use keepstone_node::{net, Clock, MemoryStore, Storage, SystemClock};
 use rand::rngs::OsRng;
+use rand::seq::SliceRandom;
 use rand::RngCore;
+use std::sync::{Arc, Mutex};
 
 /// Keepstone reference client.
 #[derive(Debug, Parser)]
@@ -113,9 +117,23 @@ enum Command {
         /// Drop id (hex).
         id: String,
     },
+    /// Serve local drops to peers over TCP (reference M2 transport).
+    Serve {
+        /// Address to listen on.
+        #[arg(long, default_value = "127.0.0.1:7777")]
+        listen: String,
+    },
+    /// Fetch a drop and its chunks from a peer by id.
+    Fetch {
+        /// Peer address, e.g. `127.0.0.1:7777`.
+        peer: String,
+        /// Drop id (hex).
+        id: String,
+    },
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
     fs::create_dir_all(&cli.data_dir)
         .with_context(|| format!("creating {}", cli.data_dir.display()))?;
@@ -142,6 +160,8 @@ fn main() -> Result<()> {
         Command::DropOpen { id, out } => drop_open(&cli.data_dir, &id, out.as_deref()),
         Command::DropList { lat, lng, ring } => drop_list(&cli.data_dir, lat, lng, ring),
         Command::LogVerify { id } => log_verify(&cli.data_dir, &id),
+        Command::Serve { listen } => serve(&cli.data_dir, &listen).await,
+        Command::Fetch { peer, id } => fetch(&cli.data_dir, &peer, &id).await,
     }
 }
 
@@ -309,8 +329,39 @@ fn drop_create(
     let (framing, chunks) = stream::encrypt(&content_key, &plaintext)?;
     let root = content_root(&chunks);
 
-    // Seal the content key to the recipient's device key.
+    // Per-drop nonce binds recipient tags to this drop only.
+    let mut drop_nonce = [0u8; 16];
+    OsRng.fill_bytes(&mut drop_nonce);
+
+    // Seal the content key to the recipient, located by a short tag.
     let sealed = SealedKey::seal(&content_key, &recipient_ecdh)?;
+    let tag = derive_tag(&recipient_ecdh, &drop_nonce)?;
+    let mut wrapped_keys = vec![WrappedKey { tag, sealed }];
+
+    // Pad with decoys so the recipient count is not revealed in the clear.
+    let mut rng = OsRng;
+    while wrapped_keys.len() < MIN_TAGS {
+        let mut decoy_tag = [0u8; 8];
+        let mut ephemeral_public = [0u8; 32];
+        let mut nonce = [0u8; 24];
+        let mut ciphertext = vec![0u8; 48];
+        rng.fill_bytes(&mut decoy_tag);
+        rng.fill_bytes(&mut ephemeral_public);
+        rng.fill_bytes(&mut nonce);
+        rng.fill_bytes(&mut ciphertext);
+        wrapped_keys.push(WrappedKey {
+            tag: decoy_tag,
+            sealed: SealedKey {
+                ephemeral_public,
+                nonce,
+                ciphertext,
+            },
+        });
+    }
+    wrapped_keys.shuffle(&mut rng);
+
+    let signer = identity.signing_public();
+    let pow_nonce = keepstone_core::pow::mine(&signer, &root, &drop_nonce);
 
     let cell = CellId::from_lat_lng(lat, lng, res)?;
     let now = SystemClock.now_unix();
@@ -328,10 +379,9 @@ fn drop_create(
         chunk_count: framing.total,
         content_root: root,
         prefix: framing.prefix,
-        wrapped_keys: vec![keepstone_core::WrappedKey {
-            recipient: recipient_ecdh,
-            sealed,
-        }],
+        drop_nonce,
+        pow_nonce,
+        wrapped_keys,
     };
 
     let signed = SignedDrop::sign(&identity, &body);
@@ -374,17 +424,22 @@ fn drop_open(dir: &Path, id_text: &str, out: Option<&Path>) -> Result<()> {
     let signed = SignedDrop::decode(&raw)?;
     signed.verify().context("drop signature invalid")?;
     let body = signed.body()?;
+    if !body.pow_ok(&signed.signer) {
+        bail!("drop proof-of-work invalid");
+    }
 
-    let wrapped = body
-        .wrapped_keys
-        .iter()
-        .find(|w| w.recipient == identity.ecdh_public())
-        .ok_or_else(|| anyhow!("this drop is not addressed to this device"))?;
-
-    let content_key = wrapped
-        .sealed
-        .open(&identity.ecdh_secret_bytes())
-        .context("could not unseal content key")?;
+    let our_tag = derive_tag(&identity.ecdh_public(), &body.drop_nonce)?;
+    let mut unsealed = None;
+    for wrapped in &body.wrapped_keys {
+        if wrapped.tag == our_tag {
+            if let Ok(key) = wrapped.sealed.open(&identity.ecdh_secret_bytes()) {
+                unsealed = Some(key);
+                break;
+            }
+        }
+    }
+    let content_key =
+        unsealed.ok_or_else(|| anyhow!("this drop is not addressed to this device"))?;
 
     let chunks = load_chunks(dir, &id, body.chunk_count)?;
     let framing = stream::Framing {
@@ -528,6 +583,10 @@ fn log_verify(dir: &Path, id_text: &str) -> Result<()> {
     let raw = fs::read(drop_path(dir, &id)).with_context(|| format!("no such drop: {id_text}"))?;
     let signed = SignedDrop::decode(&raw)?;
     signed.verify().context("drop signature invalid")?;
+    let body = signed.body()?;
+    if !body.pow_ok(&signed.signer) {
+        bail!("drop proof-of-work invalid");
+    }
 
     let entries = load_log_entries(dir)?;
     let leaves: Vec<merkle::Hash> = entries.iter().map(|e| merkle::leaf_hash(e)).collect();
@@ -553,5 +612,93 @@ fn log_verify(dir: &Path, id_text: &str) -> Result<()> {
     if !included || !sth_ok {
         bail!("verification failed");
     }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Peer transport (M2 reference): serve + fetch over TCP
+// ---------------------------------------------------------------------------
+
+fn load_store(dir: &Path) -> Result<MemoryStore> {
+    let mut store = MemoryStore::new();
+    if let Ok(entries) = fs::read_dir(drops_dir(dir)) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("signed") {
+                continue;
+            }
+            let raw = fs::read(&path)?;
+            store.put_drop(DropId::of(&raw), raw);
+        }
+    }
+    if let Ok(entries) = fs::read_dir(dir.join("chunks")) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            let Ok(id) = DropId::from_hex(name) else {
+                continue;
+            };
+            if let Ok(files) = fs::read_dir(&path) {
+                for file in files.flatten() {
+                    let chunk_path = file.path();
+                    let Some(stem) = chunk_path.file_stem().and_then(|s| s.to_str()) else {
+                        continue;
+                    };
+                    let Ok(index) = stem.parse::<u32>() else {
+                        continue;
+                    };
+                    store.put_chunk(id, index, fs::read(&chunk_path)?);
+                }
+            }
+        }
+    }
+    Ok(store)
+}
+
+async fn serve(dir: &Path, listen: &str) -> Result<()> {
+    let store = Arc::new(Mutex::new(load_store(dir)?));
+    let listener = tokio::net::TcpListener::bind(listen)
+        .await
+        .with_context(|| format!("binding {listen}"))?;
+    println!("serving drops on {listen} (ciphertext only)");
+    net::serve(listener, store).await;
+    Ok(())
+}
+
+async fn fetch(dir: &Path, peer: &str, id_text: &str) -> Result<()> {
+    let id = DropId::from_hex(id_text)?;
+    let raw = net::fetch(peer, id)
+        .await
+        .with_context(|| format!("fetching {id_text} from {peer}"))?
+        .ok_or_else(|| anyhow!("peer does not have drop {id_text}"))?;
+
+    let signed = SignedDrop::decode(&raw)?;
+    signed.verify().context("peer sent an invalid signature")?;
+    let body = signed.body()?;
+    if !body.pow_ok(&signed.signer) {
+        bail!("peer sent a drop with invalid proof-of-work");
+    }
+
+    fs::create_dir_all(drops_dir(dir)).ok();
+    fs::write(drop_path(dir, &id), &raw).context("writing fetched drop")?;
+    let chunk_dir = chunks_dir(dir, &id);
+    fs::create_dir_all(&chunk_dir).ok();
+
+    let mut received = 0u32;
+    for index in 0..body.chunk_count {
+        let chunk = net::fetch_chunk(peer, id, index)
+            .await
+            .with_context(|| format!("fetching chunk {index}"))?
+            .ok_or_else(|| anyhow!("peer is missing chunk {index}"))?;
+        fs::write(chunk_dir.join(format!("{index}.bin")), chunk)?;
+        received += 1;
+    }
+
+    // Record the fetched drop in the local transparency log too.
+    append_log_entry(dir, &raw).ok();
+
+    println!("fetched {id} ({received} chunks) from {peer}");
     Ok(())
 }
