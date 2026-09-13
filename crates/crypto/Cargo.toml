@@ -24,3 +24,8 @@ hex.workspace = true
 
 [dev-dependencies]
 proptest = "1"
+criterion = "0.5"
+
+[[bench]]
+name = "crypto"
+harness = false
