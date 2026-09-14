@@ -11,7 +11,7 @@
 
 use core::fmt;
 
-use ml_kem::kem::{Decapsulate, Encapsulate, Kem, KeyExport, TryKeyInit};
+use ml_kem::kem::{Decapsulate, Encapsulate, Kem, KeyExport, KeyInit, TryKeyInit};
 use ml_kem::{DecapsulationKey, EncapsulationKey, MlKem768};
 use rand::rngs::OsRng;
 use rand::RngCore;
@@ -93,6 +93,33 @@ impl HybridKeypair {
             x25519: X25519Public::from(&self.x25519).to_bytes(),
             kem: self.kem_public.clone(),
         }
+    }
+
+    /// Export the secret key material: `x25519 (32) || ml-kem seed (64)`.
+    #[must_use]
+    pub fn to_secret_bytes(&self) -> [u8; 96] {
+        let mut out = [0u8; 96];
+        out[..32].copy_from_slice(&self.x25519.to_bytes());
+        out[32..].copy_from_slice(self.kem.to_bytes().as_slice());
+        out
+    }
+
+    /// Reconstruct a keypair from [`HybridKeypair::to_secret_bytes`].
+    ///
+    /// # Errors
+    /// Returns [`CryptoError::InvalidKeyLength`] if the seed is rejected.
+    pub fn from_secret_bytes(bytes: &[u8; 96]) -> Result<Self, CryptoError> {
+        let x25519 = StaticSecret::from(
+            <[u8; 32]>::try_from(&bytes[..32]).map_err(|_| CryptoError::InvalidKeyLength)?,
+        );
+        let kem = <Decapsulation as KeyInit>::new_from_slice(&bytes[32..])
+            .map_err(|_| CryptoError::InvalidKeyLength)?;
+        let kem_public = kem.encapsulation_key().to_bytes().as_slice().to_vec();
+        Ok(Self {
+            x25519,
+            kem,
+            kem_public,
+        })
     }
 
     /// Open a value sealed to this keypair's public half.
@@ -182,5 +209,16 @@ mod tests {
         let sealed = seal(&[0u8; KEY_LEN], &public).unwrap();
         // ML-KEM-768 ciphertext is 1088 bytes.
         assert_eq!(sealed.kem_ciphertext.len(), 1088);
+    }
+
+    #[test]
+    fn secret_bytes_round_trip() {
+        let original = HybridKeypair::generate();
+        let restored = HybridKeypair::from_secret_bytes(&original.to_secret_bytes()).unwrap();
+        assert_eq!(restored.public(), original.public());
+
+        let content_key = [5u8; KEY_LEN];
+        let sealed = seal(&content_key, &restored.public()).unwrap();
+        assert_eq!(original.open(&sealed).unwrap(), content_key);
     }
 }

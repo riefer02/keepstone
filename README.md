@@ -16,7 +16,7 @@ the confidentiality guarantee.**
 - **M2 (networking):** reference TCP peer protocol (`serve` / `fetch`); **libp2p transport** (QUIC + TCP, Noise, identify) with request/response for envelope + chunk exchange (`p2p-serve` / `p2p-fetch`); **gossipsub cell topics** so peers receive drops from unknown authors in dense cells; **Kademlia provider records** for sparse-cell discovery (`/keepstone/kad`); recipient tags with decoy padding; hashcash-style proof-of-work; log equivocation detection.
 - **M3 (place-locked, in progress):** Shamir secret sharing over GF(256); witness presence requests/attestations and k-of-n certificates (distinct-witness + expiry checks); **networked witness collection** over the peer protocol (`serve_witness` / `request_presence`); custodian share sealing and place-locked reconstruction.
 - **M4 (verifiability & hardening):** property-based tests; **fuzzing** (`cargo-fuzz` harnesses for drop, protocol, and presence decoders — ~30M executions, no crashes); **external anchoring** of signed tree heads behind an `Anchor` trait (`log-anchor` / `log-anchors`); **criterion benchmarks** (`docs/BENCHMARKS.md`).
-- **M5 (in progress):** post-quantum **hybrid key encapsulation** and **hybrid signatures** (X25519 + ML-KEM-768; Ed25519 + ML-DSA-65) behind `CryptoSuite::Hybrid25519MlKem768`; multi-device and federation remain.
+- **M5 (in progress):** post-quantum **hybrid key encapsulation** and **hybrid signatures** (X25519 + ML-KEM-768; Ed25519 + ML-DSA-65), **wired end-to-end** into drops (`drop-create --suite hybrid`); multi-device and federation remain.
 
 The test suite currently passes **78 tests** covering AEAD, sealed boxes,
 chunked streaming encryption, canonical CBOR, signing/verification, H3
@@ -57,15 +57,18 @@ cargo build --workspace
 keepstone --data-dir ./demo/alice keygen
 keepstone --data-dir ./demo/bob   keygen
 
-# Alice adds Bob (public keys exchanged out of band).
+# Alice adds Bob (public keys exchanged out of band; hybrid key optional).
 BOB_SIGN=$(keepstone --data-dir ./demo/bob id | awk '/signing/{print $2}')
 BOB_ECDH=$(keepstone --data-dir ./demo/bob id | awk '/ecdh/{print $2}')
-keepstone --data-dir ./demo/alice contact-add bob "$BOB_SIGN" "$BOB_ECDH"
+BOB_HYBRID=$(keepstone --data-dir ./demo/bob id | awk '/hybrid/{print $2}')
+keepstone --data-dir ./demo/alice contact-add bob "$BOB_SIGN" "$BOB_ECDH" "$BOB_HYBRID"
 
 # Alice leaves a drop at a location.
 keepstone --data-dir ./demo/alice drop-create \
   --to bob --lat 51.5007 --lng -0.1246 --ring 2 \
   --message "meet at the old oak at dusk"
+
+# Or a post-quantum hybrid drop (X25519 + ML-KEM-768) with `--suite hybrid`.
 
 # Anyone can verify the drop's signature and its place in the log.
 keepstone --data-dir ./demo/alice log-verify <id>

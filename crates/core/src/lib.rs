@@ -24,6 +24,6 @@ pub use address::CellId;
 pub use error::CoreError;
 pub use presence::{PresenceAttestation, PresenceCert, PresenceRequest};
 pub use types::{
-    content_root, sha256, signing_input, DropBody, DropId, Mode, SignedDrop, WrappedKey, MIN_TAGS,
-    PROTOCOL_VERSION,
+    content_root, sha256, signing_input, DropBody, DropId, Mode, SealedContentKey, SignedDrop,
+    WrappedKey, MIN_TAGS, PROTOCOL_VERSION,
 };

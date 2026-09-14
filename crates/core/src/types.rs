@@ -2,7 +2,7 @@
 
 use core::fmt;
 
-use keepstone_crypto::{verify, Identity, SealedKey};
+use keepstone_crypto::{verify, HybridSealed, Identity, SealedKey};
 use sha2::{Digest, Sha256};
 
 use crate::cbor::{Decoder, Encoder};
@@ -142,6 +142,26 @@ impl Mode {
     }
 }
 
+/// A content key sealed under the classical or hybrid suite.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SealedContentKey {
+    /// X25519 sealed box (suite 1).
+    Classical(SealedKey),
+    /// X25519 + ML-KEM-768 hybrid seal (suite 2).
+    Hybrid(HybridSealed),
+}
+
+impl SealedContentKey {
+    /// The crypto-suite id that produced this sealed key.
+    #[must_use]
+    pub fn suite_id(&self) -> u8 {
+        match self {
+            Self::Classical(_) => 1,
+            Self::Hybrid(_) => 2,
+        }
+    }
+}
+
 /// A content key sealed to one recipient, located by a short tag.
 ///
 /// The drop does **not** name the recipient in the clear. The recipient derives
@@ -151,8 +171,8 @@ impl Mode {
 pub struct WrappedKey {
     /// `HKDF(recipient_x25519_public, drop_nonce)` truncated to 8 bytes.
     pub tag: [u8; 8],
-    /// The sealed content key.
-    pub sealed: SealedKey,
+    /// The sealed content key (classical or hybrid).
+    pub sealed: SealedContentKey,
 }
 
 /// The signed body of a drop (everything except the signature).
@@ -209,11 +229,25 @@ impl DropBody {
         enc.uint(self.pow_nonce);
         enc.array(self.wrapped_keys.len());
         for wrapped in &self.wrapped_keys {
-            enc.array(4);
+            enc.array(3);
             enc.bytes(&wrapped.tag);
-            enc.bytes(&wrapped.sealed.ephemeral_public);
-            enc.bytes(&wrapped.sealed.nonce);
-            enc.bytes(&wrapped.sealed.ciphertext);
+            match &wrapped.sealed {
+                SealedContentKey::Classical(sealed) => {
+                    enc.uint(1);
+                    enc.array(3);
+                    enc.bytes(&sealed.ephemeral_public);
+                    enc.bytes(&sealed.nonce);
+                    enc.bytes(&sealed.ciphertext);
+                }
+                SealedContentKey::Hybrid(sealed) => {
+                    enc.uint(2);
+                    enc.array(4);
+                    enc.bytes(&sealed.ephemeral_x25519);
+                    enc.bytes(&sealed.kem_ciphertext);
+                    enc.bytes(&sealed.nonce);
+                    enc.bytes(&sealed.ciphertext);
+                }
+            }
         }
         enc.into_bytes()
     }
@@ -243,21 +277,43 @@ impl DropBody {
         let wrapped_count = dec.array()?;
         let mut wrapped_keys = Vec::with_capacity(wrapped_count);
         for _ in 0..wrapped_count {
-            if dec.array()? != 4 {
+            if dec.array()? != 3 {
                 return Err(CoreError::Cbor("wrapped key arity"));
             }
             let tag = dec.bytes_fixed::<8>()?;
-            let ephemeral_public = dec.bytes_fixed::<32>()?;
-            let nonce = dec.bytes_fixed::<24>()?;
-            let ciphertext = dec.bytes()?.to_vec();
-            wrapped_keys.push(WrappedKey {
-                tag,
-                sealed: SealedKey {
-                    ephemeral_public,
-                    nonce,
-                    ciphertext,
-                },
-            });
+            let kind = dec.uint()?;
+            let sealed = match kind {
+                1 => {
+                    if dec.array()? != 3 {
+                        return Err(CoreError::Cbor("classical sealed arity"));
+                    }
+                    let ephemeral_public = dec.bytes_fixed::<32>()?;
+                    let nonce = dec.bytes_fixed::<24>()?;
+                    let ciphertext = dec.bytes()?.to_vec();
+                    SealedContentKey::Classical(SealedKey {
+                        ephemeral_public,
+                        nonce,
+                        ciphertext,
+                    })
+                }
+                2 => {
+                    if dec.array()? != 4 {
+                        return Err(CoreError::Cbor("hybrid sealed arity"));
+                    }
+                    let ephemeral_x25519 = dec.bytes_fixed::<32>()?;
+                    let kem_ciphertext = dec.bytes()?.to_vec();
+                    let nonce = dec.bytes_fixed::<24>()?;
+                    let ciphertext = dec.bytes()?.to_vec();
+                    SealedContentKey::Hybrid(HybridSealed {
+                        ephemeral_x25519,
+                        kem_ciphertext,
+                        nonce,
+                        ciphertext,
+                    })
+                }
+                _ => return Err(CoreError::Cbor("unknown sealed key kind")),
+            };
+            wrapped_keys.push(WrappedKey { tag, sealed });
         }
         dec.finish()?;
         Ok(Self {

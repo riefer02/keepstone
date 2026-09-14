@@ -2,30 +2,49 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use keepstone_core::{
-    cbor::Encoder, DropBody, DropId, Mode, SignedDrop, WrappedKey, PROTOCOL_VERSION,
+    cbor::Encoder, DropBody, DropId, Mode, SealedContentKey, SignedDrop, WrappedKey,
+    PROTOCOL_VERSION,
 };
-use keepstone_crypto::{CryptoSuite, Identity, SealedKey};
+use keepstone_crypto::{CryptoSuite, HybridSealed, Identity, SealedKey};
 use proptest::prelude::*;
 
 fn arb_bytes<const N: usize>() -> impl Strategy<Value = [u8; N]> {
     any::<[u8; N]>()
 }
 
+fn arb_sealed() -> impl Strategy<Value = SealedContentKey> {
+    prop_oneof![
+        (
+            arb_bytes::<32>(),
+            arb_bytes::<24>(),
+            proptest::collection::vec(any::<u8>(), 0..64),
+        )
+            .prop_map(|(ephemeral_public, nonce, ciphertext)| {
+                SealedContentKey::Classical(SealedKey {
+                    ephemeral_public,
+                    nonce,
+                    ciphertext,
+                })
+            }),
+        (
+            arb_bytes::<32>(),
+            proptest::collection::vec(any::<u8>(), 0..64),
+            arb_bytes::<24>(),
+            proptest::collection::vec(any::<u8>(), 0..64),
+        )
+            .prop_map(|(ephemeral_x25519, kem_ciphertext, nonce, ciphertext)| {
+                SealedContentKey::Hybrid(HybridSealed {
+                    ephemeral_x25519,
+                    kem_ciphertext,
+                    nonce,
+                    ciphertext,
+                })
+            }),
+    ]
+}
+
 fn arb_wrapped() -> impl Strategy<Value = WrappedKey> {
-    (
-        arb_bytes::<8>(),
-        arb_bytes::<32>(),
-        arb_bytes::<24>(),
-        proptest::collection::vec(any::<u8>(), 0..64),
-    )
-        .prop_map(|(tag, ephemeral_public, nonce, ciphertext)| WrappedKey {
-            tag,
-            sealed: SealedKey {
-                ephemeral_public,
-                nonce,
-                ciphertext,
-            },
-        })
+    (arb_bytes::<8>(), arb_sealed()).prop_map(|(tag, sealed)| WrappedKey { tag, sealed })
 }
 
 fn arb_body() -> impl Strategy<Value = DropBody> {

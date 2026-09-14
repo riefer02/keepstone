@@ -19,11 +19,11 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 use keepstone_core::{
-    content_root, sha256, CellId, DropBody, DropId, Mode, SignedDrop, WrappedKey, MIN_TAGS,
-    PROTOCOL_VERSION,
+    content_root, sha256, CellId, DropBody, DropId, Mode, SealedContentKey, SignedDrop, WrappedKey,
+    MIN_TAGS, PROTOCOL_VERSION,
 };
 use keepstone_crypto::kdf::derive_tag;
-use keepstone_crypto::{stream, CryptoSuite, Identity, SealedKey};
+use keepstone_crypto::{stream, CryptoSuite, HybridKeypair, HybridPublic, Identity, SealedKey};
 use keepstone_log::{anchor, merkle, Anchor, SignedTreeHead};
 use keepstone_node::{net, Clock, MemoryStore, Storage, SystemClock};
 use rand::rngs::OsRng;
@@ -62,6 +62,8 @@ enum Command {
         signing: String,
         /// Contact's X25519 public key (hex).
         ecdh: String,
+        /// Contact's hybrid public key (hex, 32-byte X25519 || ML-KEM-768 EK). Optional.
+        hybrid: Option<String>,
     },
     /// List known contacts.
     ContactList,
@@ -91,6 +93,9 @@ enum Command {
         /// Time-to-live in seconds (0 = never expires).
         #[arg(long, default_value_t = 0)]
         ttl: u64,
+        /// Crypto suite: `classical` (default) or `hybrid` (post-quantum).
+        #[arg(long, default_value = "classical")]
+        suite: String,
     },
     /// Open (decrypt) a drop by id.
     DropOpen {
@@ -165,7 +170,8 @@ async fn main() -> Result<()> {
             name,
             signing,
             ecdh,
-        } => contact_add(&cli.data_dir, &name, &signing, &ecdh),
+            hybrid,
+        } => contact_add(&cli.data_dir, &name, &signing, &ecdh, hybrid.as_deref()),
         Command::ContactList => contact_list(&cli.data_dir),
         Command::DropCreate {
             to,
@@ -176,7 +182,19 @@ async fn main() -> Result<()> {
             message,
             file,
             ttl,
-        } => drop_create(&cli.data_dir, &to, lat, lng, res, ring, message, file, ttl),
+            suite,
+        } => drop_create(
+            &cli.data_dir,
+            &to,
+            lat,
+            lng,
+            res,
+            ring,
+            message,
+            file,
+            ttl,
+            &suite,
+        ),
         Command::DropOpen { id, out } => drop_open(&cli.data_dir, &id, out.as_deref()),
         Command::DropList { lat, lng, ring } => drop_list(&cli.data_dir, lat, lng, ring),
         Command::LogVerify { id } => log_verify(&cli.data_dir, &id),
@@ -230,17 +248,73 @@ fn keygen(dir: &Path) -> Result<()> {
     }
     let identity = Identity::generate();
     save_identity(dir, &identity)?;
+    let hybrid = HybridKeypair::generate();
+    save_hybrid(dir, &hybrid)?;
     println!("identity created");
     println!("  signing: {}", hex::encode(identity.signing_public()));
     println!("  ecdh:    {}", hex::encode(identity.ecdh_public()));
+    println!("  hybrid:  {}", hex::encode(hybrid_public_bytes(&hybrid)));
     Ok(())
 }
 
 fn print_id(dir: &Path) -> Result<()> {
     let identity = load_identity(dir)?;
+    let hybrid = load_or_create_hybrid(dir)?;
     println!("signing: {}", hex::encode(identity.signing_public()));
     println!("ecdh:    {}", hex::encode(identity.ecdh_public()));
+    println!("hybrid:  {}", hex::encode(hybrid_public_bytes(&hybrid)));
     Ok(())
+}
+
+fn hybrid_path(dir: &Path) -> PathBuf {
+    dir.join("hybrid.txt")
+}
+
+fn hybrid_public_bytes(keypair: &HybridKeypair) -> Vec<u8> {
+    let public: HybridPublic = keypair.public();
+    let mut out = Vec::with_capacity(public.x25519.len() + public.kem.len());
+    out.extend_from_slice(&public.x25519);
+    out.extend_from_slice(&public.kem);
+    out
+}
+
+fn save_hybrid(dir: &Path, keypair: &HybridKeypair) -> Result<()> {
+    fs::write(hybrid_path(dir), hex::encode(keypair.to_secret_bytes()))
+        .context("writing hybrid key")?;
+    Ok(())
+}
+
+fn load_hybrid(dir: &Path) -> Result<HybridKeypair> {
+    let text = fs::read_to_string(hybrid_path(dir))
+        .context("no hybrid key found; regenerate the identity")?;
+    let bytes = hex::decode(text.trim()).context("decoding hybrid key")?;
+    let arr: [u8; 96] = bytes
+        .try_into()
+        .map_err(|_| anyhow!("expected 96-byte hybrid key"))?;
+    Ok(HybridKeypair::from_secret_bytes(&arr)?)
+}
+
+fn load_or_create_hybrid(dir: &Path) -> Result<HybridKeypair> {
+    if hybrid_path(dir).exists() {
+        load_hybrid(dir)
+    } else {
+        let keypair = HybridKeypair::generate();
+        save_hybrid(dir, &keypair)?;
+        Ok(keypair)
+    }
+}
+
+fn hybrid_public_from_bytes(bytes: &[u8]) -> Result<HybridPublic> {
+    if bytes.len() != 32 + 1184 {
+        bail!("hybrid public key must be 32 + 1184 bytes");
+    }
+    let x25519: [u8; 32] = bytes[..32]
+        .try_into()
+        .map_err(|_| anyhow!("bad hybrid x25519"))?;
+    Ok(HybridPublic {
+        x25519,
+        kem: bytes[32..].to_vec(),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -251,9 +325,19 @@ fn contacts_path(dir: &Path) -> PathBuf {
     dir.join("contacts.txt")
 }
 
-fn contact_add(dir: &Path, name: &str, signing: &str, ecdh: &str) -> Result<()> {
+fn contact_add(
+    dir: &Path,
+    name: &str,
+    signing: &str,
+    ecdh: &str,
+    hybrid: Option<&str>,
+) -> Result<()> {
     let signing = hex32(signing)?;
     let ecdh = hex32(ecdh)?;
+    let hybrid = match hybrid {
+        Some(value) => Some(hex::decode(value).context("decoding hybrid contact key")?),
+        None => None,
+    };
     if name.contains(char::is_whitespace) {
         bail!("contact name must not contain whitespace");
     }
@@ -262,16 +346,20 @@ fn contact_add(dir: &Path, name: &str, signing: &str, ecdh: &str) -> Result<()> 
         bail!("contact `{name}` already exists");
     }
     existing.push_str(&format!(
-        "{name} {} {}\n",
+        "{name} {} {} {}\n",
         hex::encode(signing),
-        hex::encode(ecdh)
+        hex::encode(ecdh),
+        hybrid.map(hex::encode).unwrap_or_else(|| "-".to_owned())
     ));
     fs::write(contacts_path(dir), existing).context("writing contacts")?;
     println!("contact `{name}` added");
     Ok(())
 }
 
-fn load_contacts(dir: &Path) -> Result<Vec<(String, [u8; 32], [u8; 32])>> {
+/// `(name, signing, ecdh, hybrid_public?)`
+type Contact = (String, [u8; 32], [u8; 32], Option<Vec<u8>>);
+
+fn load_contacts(dir: &Path) -> Result<Vec<Contact>> {
     let text = fs::read_to_string(contacts_path(dir)).unwrap_or_default();
     let mut out = Vec::new();
     for line in text.lines() {
@@ -280,7 +368,11 @@ fn load_contacts(dir: &Path) -> Result<Vec<(String, [u8; 32], [u8; 32])>> {
         else {
             continue;
         };
-        out.push((name.to_owned(), hex32(signing)?, hex32(ecdh)?));
+        let hybrid = match parts.next() {
+            Some("-") | None => None,
+            Some(value) => Some(hex::decode(value).context("decoding hybrid contact key")?),
+        };
+        out.push((name.to_owned(), hex32(signing)?, hex32(ecdh)?, hybrid));
     }
     Ok(out)
 }
@@ -291,12 +383,15 @@ fn contact_list(dir: &Path) -> Result<()> {
         println!("(no contacts)");
         return Ok(());
     }
-    for (name, signing, ecdh) in contacts {
+    for (name, signing, ecdh, hybrid) in contacts {
         println!(
             "{name}\n  signing: {}\n  ecdh:    {}",
             hex::encode(signing),
             hex::encode(ecdh)
         );
+        if let Some(hybrid) = hybrid {
+            println!("  hybrid:  {}", hex::encode(hybrid));
+        }
     }
     Ok(())
 }
@@ -327,14 +422,20 @@ fn drop_create(
     message: Option<String>,
     file: Option<PathBuf>,
     ttl: u64,
+    suite: &str,
 ) -> Result<()> {
     let identity = load_identity(dir)?;
     let contacts = load_contacts(dir)?;
-    let (_, _signing, recipient_ecdh) = contacts
+    let (_, _signing, recipient_ecdh, recipient_hybrid) = contacts
         .iter()
-        .find(|(name, _, _)| name == to)
+        .find(|(name, _, _, _)| name == to)
         .cloned()
         .ok_or_else(|| anyhow!("unknown contact `{to}`; add them with `contact-add`"))?;
+
+    let hybrid_mode = suite.eq_ignore_ascii_case("hybrid");
+    if !hybrid_mode && !suite.eq_ignore_ascii_case("classical") {
+        bail!("unknown suite `{suite}` (expected `classical` or `hybrid`)");
+    }
 
     let plaintext = match (message, file) {
         (Some(message), None) => message.into_bytes(),
@@ -358,7 +459,21 @@ fn drop_create(
     OsRng.fill_bytes(&mut drop_nonce);
 
     // Seal the content key to the recipient, located by a short tag.
-    let sealed = SealedKey::seal(&content_key, &recipient_ecdh)?;
+    let (suite_id, sealed) = if hybrid_mode {
+        let hybrid = recipient_hybrid.as_ref().ok_or_else(|| {
+            anyhow!("contact `{to}` has no hybrid key; re-add with their hybrid public key")
+        })?;
+        let public = hybrid_public_from_bytes(hybrid)?;
+        (
+            CryptoSuite::Hybrid25519MlKem768.id(),
+            SealedContentKey::Hybrid(keepstone_crypto::hybrid::seal(&content_key, &public)?),
+        )
+    } else {
+        (
+            CryptoSuite::Classical25519.id(),
+            SealedContentKey::Classical(SealedKey::seal(&content_key, &recipient_ecdh)?),
+        )
+    };
     let tag = derive_tag(&recipient_ecdh, &drop_nonce)?;
     let mut wrapped_keys = vec![WrappedKey { tag, sealed }];
 
@@ -375,11 +490,11 @@ fn drop_create(
         rng.fill_bytes(&mut ciphertext);
         wrapped_keys.push(WrappedKey {
             tag: decoy_tag,
-            sealed: SealedKey {
+            sealed: SealedContentKey::Classical(SealedKey {
                 ephemeral_public,
                 nonce,
                 ciphertext,
-            },
+            }),
         });
     }
     wrapped_keys.shuffle(&mut rng);
@@ -393,7 +508,7 @@ fn drop_create(
 
     let body = DropBody {
         version: PROTOCOL_VERSION,
-        suite: CryptoSuite::default_suite().id(),
+        suite: suite_id,
         cell: cell.to_hex(),
         ring,
         created_at: now,
@@ -453,12 +568,30 @@ fn drop_open(dir: &Path, id_text: &str, out: Option<&Path>) -> Result<()> {
     }
 
     let our_tag = derive_tag(&identity.ecdh_public(), &body.drop_nonce)?;
+    let ecdh_secret = identity.ecdh_secret_bytes();
+    let mut hybrid: Option<HybridKeypair> = None;
     let mut unsealed = None;
     for wrapped in &body.wrapped_keys {
-        if wrapped.tag == our_tag {
-            if let Ok(key) = wrapped.sealed.open(&identity.ecdh_secret_bytes()) {
-                unsealed = Some(key);
-                break;
+        if wrapped.tag != our_tag {
+            continue;
+        }
+        match &wrapped.sealed {
+            SealedContentKey::Classical(sealed) => {
+                if let Ok(key) = sealed.open(&ecdh_secret) {
+                    unsealed = Some(key);
+                    break;
+                }
+            }
+            SealedContentKey::Hybrid(sealed) => {
+                if hybrid.is_none() {
+                    hybrid = Some(load_hybrid(dir)?);
+                }
+                if let Some(keypair) = hybrid.as_ref() {
+                    if let Ok(key) = keypair.open(sealed) {
+                        unsealed = Some(key);
+                        break;
+                    }
+                }
             }
         }
     }
