@@ -17,6 +17,7 @@
 pub mod aead;
 pub mod error;
 pub mod hybrid;
+pub mod hybrid_sig;
 pub mod kdf;
 pub mod keys;
 pub mod sealed;

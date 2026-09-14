@@ -21,6 +21,7 @@ rand.workspace = true
 ed25519-dalek.workspace = true
 x25519-dalek.workspace = true
 ml-kem = { version = "0.3", features = ["getrandom"] }
+ml-dsa = { version = "0.1", features = ["getrandom"] }
 hex.workspace = true
 
 [dev-dependencies]
