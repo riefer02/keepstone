@@ -27,12 +27,21 @@ Unknown suite ids MUST fail closed.
 ## 3. Drop envelope
 
 ```
-Envelope = [ suite:uint, signer:bytes(32), payload:bytes, signature:bytes(64) ]
+Envelope = [ suite:uint, sig_kind:uint, signer:bytes(32),
+             ml_dsa_key:bytes, payload:bytes, signature:bytes ]
+
+sig_kind = 1 (Ed25519):
+  ml_dsa_key = empty, signature = 64 bytes
+sig_kind = 2 (hybrid Ed25519 + ML-DSA-65):
+  ml_dsa_key = 1952-byte ML-DSA-65 verifying key,
+  signature  = 64-byte Ed25519 || 3309-byte ML-DSA-65 signature
 ```
 
 - `payload` is the canonical encoding of `DropBody`.
-- `signature` = Ed25519 over `signing_input`.
 - `signing_input = "keepstone/v1/drop" || len_be32(payload) || payload`.
+- Ed25519 signs `signing_input`; ML-DSA-65 signs the same `signing_input`.
+- A hybrid envelope verifies only if **both** signatures verify.
+- `signer` is always the Ed25519 public key and is what the proof-of-work binds to.
 - `id = SHA-256(envelope_bytes)`.
 
 ## 4. Drop body

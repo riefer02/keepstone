@@ -2,7 +2,7 @@
 
 use core::fmt;
 
-use keepstone_crypto::{verify, HybridSealed, Identity, SealedKey};
+use keepstone_crypto::{hybrid_sig, verify, HybridSealed, Identity, MlDsaKeypair, SealedKey};
 use sha2::{Digest, Sha256};
 
 use crate::cbor::{Decoder, Encoder};
@@ -14,6 +14,11 @@ pub const PROTOCOL_VERSION: u8 = 1;
 
 /// Signing context (domain separation) for drop envelopes.
 pub const DROP_CONTEXT: &[u8] = b"keepstone/v1/drop";
+
+/// Signature kind: Ed25519 only.
+pub const SIG_ED25519: u8 = 1;
+/// Signature kind: Ed25519 + ML-DSA-65 (hybrid post-quantum).
+pub const SIG_HYBRID: u8 = 2;
 
 /// Minimum number of recipient tag slots per drop (real + decoys).
 ///
@@ -355,12 +360,21 @@ pub fn signing_input(payload: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Encode the signed envelope for a payload + signature.
-fn encode_envelope(suite: u8, signer: &[u8; 32], payload: &[u8], signature: &[u8; 64]) -> Vec<u8> {
+/// Encode the signed envelope.
+fn encode_envelope(
+    suite: u8,
+    sig_kind: u8,
+    signer: &[u8; 32],
+    ml_dsa_key: &[u8],
+    payload: &[u8],
+    signature: &[u8],
+) -> Vec<u8> {
     let mut enc = Encoder::new();
-    enc.array(4);
+    enc.array(6);
     enc.uint(u64::from(suite));
+    enc.uint(u64::from(sig_kind));
     enc.bytes(signer);
+    enc.bytes(ml_dsa_key);
     enc.bytes(payload);
     enc.bytes(signature);
     enc.into_bytes()
@@ -375,12 +389,16 @@ fn encode_envelope(suite: u8, signer: &[u8; 32], payload: &[u8], signature: &[u8
 pub struct SignedDrop {
     /// Crypto suite identifier.
     pub suite: u8,
-    /// Author's Ed25519 public key.
+    /// Signature kind: [`SIG_ED25519`] or [`SIG_HYBRID`].
+    pub sig_kind: u8,
+    /// Author's Ed25519 public key (always present).
     pub signer: [u8; 32],
+    /// Author's ML-DSA-65 verifying key (empty for [`SIG_ED25519`]).
+    pub ml_dsa_key: Vec<u8>,
     /// Canonical body bytes exactly as received.
     pub payload: Vec<u8>,
-    /// Author's Ed25519 signature over [`signing_input`].
-    pub signature: [u8; 64],
+    /// Signature bytes: 64 (Ed25519) or `64 || ML-DSA-65` (hybrid).
+    pub signature: Vec<u8>,
     /// Exact transmitted bytes of the whole envelope.
     pub raw: Vec<u8>,
 }
@@ -390,16 +408,55 @@ impl SignedDrop {
     #[must_use]
     pub fn sign(identity: &Identity, body: &DropBody) -> Self {
         let payload = body.to_canonical();
-        let signature = identity.sign(&signing_input(&payload));
+        let signature = identity.sign(&signing_input(&payload)).to_vec();
         let signer = identity.signing_public();
-        let raw = encode_envelope(body.suite, &signer, &payload, &signature);
+        let raw = encode_envelope(body.suite, SIG_ED25519, &signer, &[], &payload, &signature);
         Self {
             suite: body.suite,
+            sig_kind: SIG_ED25519,
             signer,
+            ml_dsa_key: Vec::new(),
             payload,
             signature,
             raw,
         }
+    }
+
+    /// Sign a drop body with a hybrid Ed25519 + ML-DSA-65 signature.
+    ///
+    /// # Errors
+    /// Returns [`CoreError`] if ML-DSA signing fails.
+    pub fn sign_hybrid(
+        identity: &Identity,
+        ml_dsa: &MlDsaKeypair,
+        body: &DropBody,
+    ) -> Result<Self, CoreError> {
+        let payload = body.to_canonical();
+        let input = signing_input(&payload);
+        let ed25519 = identity.sign(&input);
+        let ml_dsa_signature = ml_dsa.sign(&input)?;
+        let mut signature = Vec::with_capacity(64 + ml_dsa_signature.len());
+        signature.extend_from_slice(&ed25519);
+        signature.extend_from_slice(&ml_dsa_signature);
+        let signer = identity.signing_public();
+        let ml_dsa_key = ml_dsa.verifying_key_bytes();
+        let raw = encode_envelope(
+            body.suite,
+            SIG_HYBRID,
+            &signer,
+            &ml_dsa_key,
+            &payload,
+            &signature,
+        );
+        Ok(Self {
+            suite: body.suite,
+            sig_kind: SIG_HYBRID,
+            signer,
+            ml_dsa_key,
+            payload,
+            signature,
+            raw,
+        })
     }
 
     /// Decode an envelope from its exact transmitted bytes.
@@ -408,17 +465,21 @@ impl SignedDrop {
     /// Returns [`CoreError::Cbor`] on malformed input.
     pub fn decode(bytes: &[u8]) -> Result<Self, CoreError> {
         let mut dec = Decoder::new(bytes);
-        if dec.array()? != 4 {
+        if dec.array()? != 6 {
             return Err(CoreError::Cbor("envelope arity"));
         }
         let suite = u8::try_from(dec.uint()?).map_err(|_| CoreError::Cbor("suite"))?;
+        let sig_kind = u8::try_from(dec.uint()?).map_err(|_| CoreError::Cbor("sig_kind"))?;
         let signer = dec.bytes_fixed::<32>()?;
+        let ml_dsa_key = dec.bytes()?.to_vec();
         let payload = dec.bytes()?.to_vec();
-        let signature = dec.bytes_fixed::<64>()?;
+        let signature = dec.bytes()?.to_vec();
         dec.finish()?;
         Ok(Self {
             suite,
+            sig_kind,
             signer,
+            ml_dsa_key,
             payload,
             signature,
             raw: bytes.to_vec(),
@@ -436,8 +497,27 @@ impl SignedDrop {
     /// # Errors
     /// Returns [`CoreError::Verify`] on failure.
     pub fn verify(&self) -> Result<(), CoreError> {
-        verify(&self.signer, &signing_input(&self.payload), &self.signature)
-            .map_err(|_| CoreError::Verify)
+        let input = signing_input(&self.payload);
+        match self.sig_kind {
+            SIG_ED25519 => {
+                let signature: [u8; 64] = self
+                    .signature
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| CoreError::Verify)?;
+                verify(&self.signer, &input, &signature).map_err(|_| CoreError::Verify)
+            }
+            SIG_HYBRID => {
+                if self.signature.len() < 64 || self.ml_dsa_key.is_empty() {
+                    return Err(CoreError::Verify);
+                }
+                let mut ed25519 = [0u8; 64];
+                ed25519.copy_from_slice(&self.signature[..64]);
+                hybrid_sig::verify_ml_dsa(&self.ml_dsa_key, &input, &self.signature[64..])?;
+                verify(&self.signer, &input, &ed25519).map_err(|_| CoreError::Verify)
+            }
+            _ => Err(CoreError::Verify),
+        }
     }
 
     /// Decode the preserved payload as a [`DropBody`].
@@ -511,6 +591,27 @@ mod tests {
         let mut drop = SignedDrop::sign(&identity, &sample_body());
         drop.payload.push(0x00);
         assert!(drop.verify().is_err());
+    }
+
+    #[test]
+    fn hybrid_signed_drop_verifies() {
+        let identity = Identity::generate();
+        let ml_dsa = MlDsaKeypair::generate();
+        let drop = SignedDrop::sign_hybrid(&identity, &ml_dsa, &sample_body()).unwrap();
+        drop.verify().unwrap();
+        assert_eq!(drop.sig_kind, SIG_HYBRID);
+        assert_eq!(drop.ml_dsa_key.len(), 1952);
+        assert_eq!(drop.signature.len(), 64 + 3309);
+
+        let decoded = SignedDrop::decode(&drop.raw).unwrap();
+        decoded.verify().unwrap();
+        assert_eq!(decoded.id(), drop.id());
+
+        // Tampering the ML-DSA half fails verification.
+        let mut bad = drop;
+        let last = bad.signature.len() - 1;
+        bad.signature[last] ^= 0x01;
+        assert!(bad.verify().is_err());
     }
 
     #[test]

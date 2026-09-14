@@ -28,7 +28,9 @@ pub mod suite;
 
 pub use error::CryptoError;
 pub use hybrid::{HybridKeypair, HybridPublic, HybridSealed};
-pub use hybrid_sig::{HybridSignature, HybridSigningKey, HybridVerifyingKey};
+pub use hybrid_sig::{
+    verify_ml_dsa, HybridSignature, HybridSigningKey, HybridVerifyingKey, MlDsaKeypair,
+};
 pub use keys::{verify, Identity};
 pub use sealed::SealedKey;
 pub use secret::SecretBytes;

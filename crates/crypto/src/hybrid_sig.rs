@@ -111,6 +111,78 @@ pub fn verify(
         .map_err(|_| CryptoError::Verify)
 }
 
+/// A standalone ML-DSA-65 signer, used alongside an [`crate::Identity`] for
+/// hybrid signatures so the Ed25519 half stays the drop's canonical signer.
+pub struct MlDsaKeypair {
+    inner: MlDsaSigningKey<MlDsa65>,
+}
+
+impl fmt::Debug for MlDsaKeypair {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "MlDsaKeypair([REDACTED])")
+    }
+}
+
+impl MlDsaKeypair {
+    /// Generate a fresh ML-DSA-65 keypair.
+    #[must_use]
+    pub fn generate() -> Self {
+        Self {
+            inner: MlDsaSigningKey::generate(),
+        }
+    }
+
+    /// Export the 32-byte seed.
+    #[must_use]
+    pub fn to_seed(&self) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        out.copy_from_slice(self.inner.to_bytes().as_slice());
+        out
+    }
+
+    /// Reconstruct from a 32-byte seed.
+    ///
+    /// # Errors
+    /// Returns [`CryptoError::InvalidKeyLength`] if the seed is rejected.
+    pub fn from_seed(seed: &[u8; 32]) -> Result<Self, CryptoError> {
+        let inner = <MlDsaSigningKey<MlDsa65> as KeyInit>::new_from_slice(seed)
+            .map_err(|_| CryptoError::InvalidKeyLength)?;
+        Ok(Self { inner })
+    }
+
+    /// The 1952-byte ML-DSA-65 verifying key.
+    #[must_use]
+    pub fn verifying_key_bytes(&self) -> Vec<u8> {
+        self.inner.verifying_key().to_bytes().as_slice().to_vec()
+    }
+
+    /// Sign a message.
+    ///
+    /// # Errors
+    /// Returns [`CryptoError::Encrypt`] if signing fails.
+    pub fn sign(&self, message: &[u8]) -> Result<Vec<u8>, CryptoError> {
+        let signature = self
+            .inner
+            .try_sign(message)
+            .map_err(|_| CryptoError::Encrypt)?;
+        Ok(signature.encode().as_slice().to_vec())
+    }
+}
+
+/// Verify an ML-DSA-65 signature against a verifying key.
+///
+/// # Errors
+/// Returns [`CryptoError::Verify`] on failure or
+/// [`CryptoError::InvalidPublicKey`] for a malformed key.
+pub fn verify_ml_dsa(key: &[u8], message: &[u8], signature: &[u8]) -> Result<(), CryptoError> {
+    let verifying_key = MlDsaVerifyingKey::<MlDsa65>::new_from_slice(key)
+        .map_err(|_| CryptoError::InvalidPublicKey)?;
+    let signature = Signature::<MlDsa65>::try_from(signature).map_err(|_| CryptoError::Verify)?;
+    verifying_key
+        .verify(message, &signature)
+        .map_err(|_| CryptoError::Verify)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

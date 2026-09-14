@@ -25,5 +25,5 @@ pub use error::CoreError;
 pub use presence::{PresenceAttestation, PresenceCert, PresenceRequest};
 pub use types::{
     content_root, sha256, signing_input, DropBody, DropId, Mode, SealedContentKey, SignedDrop,
-    WrappedKey, MIN_TAGS, PROTOCOL_VERSION,
+    WrappedKey, MIN_TAGS, PROTOCOL_VERSION, SIG_ED25519, SIG_HYBRID,
 };

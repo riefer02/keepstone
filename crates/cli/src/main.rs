@@ -23,7 +23,9 @@ use keepstone_core::{
     MIN_TAGS, PROTOCOL_VERSION,
 };
 use keepstone_crypto::kdf::derive_tag;
-use keepstone_crypto::{stream, CryptoSuite, HybridKeypair, HybridPublic, Identity, SealedKey};
+use keepstone_crypto::{
+    stream, CryptoSuite, HybridKeypair, HybridPublic, Identity, MlDsaKeypair, SealedKey,
+};
 use keepstone_log::{anchor, merkle, Anchor, SignedTreeHead};
 use keepstone_node::{net, Clock, MemoryStore, Storage, SystemClock};
 use rand::rngs::OsRng;
@@ -250,6 +252,7 @@ fn keygen(dir: &Path) -> Result<()> {
     save_identity(dir, &identity)?;
     let hybrid = HybridKeypair::generate();
     save_hybrid(dir, &hybrid)?;
+    save_mldsa(dir, &MlDsaKeypair::generate())?;
     println!("identity created");
     println!("  signing: {}", hex::encode(identity.signing_public()));
     println!("  ecdh:    {}", hex::encode(identity.ecdh_public()));
@@ -315,6 +318,35 @@ fn hybrid_public_from_bytes(bytes: &[u8]) -> Result<HybridPublic> {
         x25519,
         kem: bytes[32..].to_vec(),
     })
+}
+
+fn mldsa_path(dir: &Path) -> PathBuf {
+    dir.join("mldsa.txt")
+}
+
+fn save_mldsa(dir: &Path, keypair: &MlDsaKeypair) -> Result<()> {
+    fs::write(mldsa_path(dir), hex::encode(keypair.to_seed())).context("writing ML-DSA seed")?;
+    Ok(())
+}
+
+fn load_mldsa(dir: &Path) -> Result<MlDsaKeypair> {
+    let text = fs::read_to_string(mldsa_path(dir))
+        .context("no ML-DSA key found; regenerate the identity")?;
+    let bytes = hex::decode(text.trim()).context("decoding ML-DSA seed")?;
+    let seed: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| anyhow!("expected 32-byte ML-DSA seed"))?;
+    Ok(MlDsaKeypair::from_seed(&seed)?)
+}
+
+fn load_or_create_mldsa(dir: &Path) -> Result<MlDsaKeypair> {
+    if mldsa_path(dir).exists() {
+        load_mldsa(dir)
+    } else {
+        let keypair = MlDsaKeypair::generate();
+        save_mldsa(dir, &keypair)?;
+        Ok(keypair)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -523,7 +555,12 @@ fn drop_create(
         wrapped_keys,
     };
 
-    let signed = SignedDrop::sign(&identity, &body);
+    let signed = if hybrid_mode {
+        let ml_dsa = load_or_create_mldsa(dir)?;
+        SignedDrop::sign_hybrid(&identity, &ml_dsa, &body)?
+    } else {
+        SignedDrop::sign(&identity, &body)
+    };
     let id = signed.id();
 
     // Persist ciphertext chunks + the signed envelope.
@@ -760,7 +797,12 @@ fn log_verify(dir: &Path, id_text: &str) -> Result<()> {
     let sth = SignedTreeHead::sign(&log, tree_size as u64, root, SystemClock.now_unix());
     let sth_ok = sth.verify().is_ok();
 
-    println!("signature:   ok");
+    let kind = if signed.sig_kind == keepstone_core::SIG_HYBRID {
+        "hybrid (Ed25519 + ML-DSA-65)"
+    } else {
+        "Ed25519"
+    };
+    println!("signature:   ok ({kind})");
     println!("inclusion:   {}", if included { "ok" } else { "FAILED" });
     println!("tree size:   {tree_size}");
     println!("leaf index:  {index}");
