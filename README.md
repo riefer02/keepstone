@@ -63,7 +63,7 @@ BOB_ECDH=$(keepstone --data-dir ./demo/bob id | awk '/ecdh/{print $2}')
 BOB_HYBRID=$(keepstone --data-dir ./demo/bob id | awk '/hybrid/{print $2}')
 keepstone --data-dir ./demo/alice contact-add bob "$BOB_SIGN" "$BOB_ECDH" "$BOB_HYBRID"
 
-# Alice leaves a drop at a location.
+# Alice leaves a drop at a location (repeat --to for multiple recipients).
 keepstone --data-dir ./demo/alice drop-create \
   --to bob --lat 51.5007 --lng -0.1246 --ring 2 \
   --message "meet at the old oak at dusk"

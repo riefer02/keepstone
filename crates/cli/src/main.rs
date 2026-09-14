@@ -71,9 +71,9 @@ enum Command {
     ContactList,
     /// Create an encrypted drop at a location.
     DropCreate {
-        /// Recipient contact name.
-        #[arg(long)]
-        to: String,
+        /// Recipient contact name. Repeat `--to` for multiple recipients.
+        #[arg(long = "to", required = true)]
+        to: Vec<String>,
         /// Latitude.
         #[arg(long, allow_hyphen_values = true)]
         lat: f64,
@@ -446,7 +446,7 @@ fn drop_path(dir: &Path, id: &DropId) -> PathBuf {
 
 fn drop_create(
     dir: &Path,
-    to: &str,
+    to: &[String],
     lat: f64,
     lng: f64,
     res: u8,
@@ -458,15 +458,24 @@ fn drop_create(
 ) -> Result<()> {
     let identity = load_identity(dir)?;
     let contacts = load_contacts(dir)?;
-    let (_, _signing, recipient_ecdh, recipient_hybrid) = contacts
-        .iter()
-        .find(|(name, _, _, _)| name == to)
-        .cloned()
-        .ok_or_else(|| anyhow!("unknown contact `{to}`; add them with `contact-add`"))?;
 
     let hybrid_mode = suite.eq_ignore_ascii_case("hybrid");
     if !hybrid_mode && !suite.eq_ignore_ascii_case("classical") {
         bail!("unknown suite `{suite}` (expected `classical` or `hybrid`)");
+    }
+
+    // Resolve every recipient (supports multi-recipient/group drops).
+    let mut recipients = Vec::with_capacity(to.len());
+    for name in to {
+        let (_, _, ecdh, hybrid) = contacts
+            .iter()
+            .find(|(contact, _, _, _)| contact == name)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown contact `{name}`; add them with `contact-add`"))?;
+        if hybrid_mode && hybrid.is_none() {
+            bail!("contact `{name}` has no hybrid key; re-add with their hybrid public key");
+        }
+        recipients.push((ecdh, hybrid));
     }
 
     let plaintext = match (message, file) {
@@ -490,24 +499,27 @@ fn drop_create(
     let mut drop_nonce = [0u8; 16];
     OsRng.fill_bytes(&mut drop_nonce);
 
-    // Seal the content key to the recipient, located by a short tag.
-    let (suite_id, sealed) = if hybrid_mode {
-        let hybrid = recipient_hybrid.as_ref().ok_or_else(|| {
-            anyhow!("contact `{to}` has no hybrid key; re-add with their hybrid public key")
-        })?;
-        let public = hybrid_public_from_bytes(hybrid)?;
-        (
-            CryptoSuite::Hybrid25519MlKem768.id(),
-            SealedContentKey::Hybrid(keepstone_crypto::hybrid::seal(&content_key, &public)?),
-        )
+    // Seal the content key to each recipient, located by a short tag.
+    let suite_id = if hybrid_mode {
+        CryptoSuite::Hybrid25519MlKem768.id()
     } else {
-        (
-            CryptoSuite::Classical25519.id(),
-            SealedContentKey::Classical(SealedKey::seal(&content_key, &recipient_ecdh)?),
-        )
+        CryptoSuite::Classical25519.id()
     };
-    let tag = derive_tag(&recipient_ecdh, &drop_nonce)?;
-    let mut wrapped_keys = vec![WrappedKey { tag, sealed }];
+    let mut wrapped_keys = Vec::with_capacity(recipients.len().max(MIN_TAGS));
+    for (ecdh, hybrid) in &recipients {
+        let sealed = if hybrid_mode {
+            let public = hybrid_public_from_bytes(
+                hybrid
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("a recipient has no hybrid key"))?,
+            )?;
+            SealedContentKey::Hybrid(keepstone_crypto::hybrid::seal(&content_key, &public)?)
+        } else {
+            SealedContentKey::Classical(SealedKey::seal(&content_key, ecdh)?)
+        };
+        let tag = derive_tag(ecdh, &drop_nonce)?;
+        wrapped_keys.push(WrappedKey { tag, sealed });
+    }
 
     // Pad with decoys so the recipient count is not revealed in the clear.
     let mut rng = OsRng;
