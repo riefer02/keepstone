@@ -374,8 +374,9 @@ fn contact_add(
         bail!("contact name must not contain whitespace");
     }
     let mut existing = fs::read_to_string(contacts_path(dir)).unwrap_or_default();
-    if existing.lines().any(|l| l.starts_with(&format!("{name} "))) {
-        bail!("contact `{name}` already exists");
+    let device_line = format!("{name} {} {} ", hex::encode(signing), hex::encode(ecdh));
+    if existing.lines().any(|l| l.starts_with(&device_line)) {
+        bail!("contact `{name}` already has this device");
     }
     existing.push_str(&format!(
         "{name} {} {} {}\n",
@@ -415,14 +416,25 @@ fn contact_list(dir: &Path) -> Result<()> {
         println!("(no contacts)");
         return Ok(());
     }
-    for (name, signing, ecdh, hybrid) in contacts {
-        println!(
-            "{name}\n  signing: {}\n  ecdh:    {}",
-            hex::encode(signing),
-            hex::encode(ecdh)
-        );
-        if let Some(hybrid) = hybrid {
-            println!("  hybrid:  {}", hex::encode(hybrid));
+    // Group devices by contact name, preserving first-seen order.
+    let mut names: Vec<String> = Vec::new();
+    for (name, ..) in &contacts {
+        if !names.contains(name) {
+            names.push(name.clone());
+        }
+    }
+    for name in names {
+        let signing = contacts
+            .iter()
+            .find(|(n, ..)| n == &name)
+            .map(|(_, signing, ..)| *signing)
+            .unwrap_or([0u8; 32]);
+        println!("{name}\n  signing: {}", hex::encode(signing));
+        for (_, _, ecdh, hybrid) in contacts.iter().filter(|(n, ..)| n == &name) {
+            println!("  device:  {}", hex::encode(ecdh));
+            if let Some(hybrid) = hybrid {
+                println!("    hybrid: {}", hex::encode(hybrid));
+            }
         }
     }
     Ok(())
@@ -464,18 +476,22 @@ fn drop_create(
         bail!("unknown suite `{suite}` (expected `classical` or `hybrid`)");
     }
 
-    // Resolve every recipient (supports multi-recipient/group drops).
-    let mut recipients = Vec::with_capacity(to.len());
+    // Resolve every recipient device (multi-recipient + multi-device).
+    let mut recipients = Vec::new();
     for name in to {
-        let (_, _, ecdh, hybrid) = contacts
+        let matching: Vec<_> = contacts
             .iter()
-            .find(|(contact, _, _, _)| contact == name)
-            .cloned()
-            .ok_or_else(|| anyhow!("unknown contact `{name}`; add them with `contact-add`"))?;
-        if hybrid_mode && hybrid.is_none() {
-            bail!("contact `{name}` has no hybrid key; re-add with their hybrid public key");
+            .filter(|(contact, _, _, _)| contact == name)
+            .collect();
+        if matching.is_empty() {
+            bail!("unknown contact `{name}`; add them with `contact-add`");
         }
-        recipients.push((ecdh, hybrid));
+        for (_, _, ecdh, hybrid) in matching {
+            if hybrid_mode && hybrid.is_none() {
+                bail!("a device for `{name}` has no hybrid key; re-add it with a hybrid key");
+            }
+            recipients.push((*ecdh, hybrid.clone()));
+        }
     }
 
     let plaintext = match (message, file) {
