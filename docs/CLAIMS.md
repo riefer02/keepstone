@@ -25,4 +25,5 @@ updated as milestones land.
 | Drops can target a group | Repeat `--to`; each recipient gets its own sealed content key + tag, padded with decoys; non-recipients are refused | ✅ M5 |
 | Multi-device recipients | Add several devices under one contact name; a single drop seals to every device and opens on each | ✅ M5 |
 | Delivery does not require the author online | Federated store-and-forward: `push` ciphertext to a relay, `fetch` later; the relay holds no keys | ✅ M5 |
+| Anyone can audit a log's head | `sth-serve` / `sth-fetch`: a peer retrieves and verifies a log's signed tree head; equivocation detection applies | ✅ M5 |
 | Not audited | — | ⚠️ No independent audit yet |

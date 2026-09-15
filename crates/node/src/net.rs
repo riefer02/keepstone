@@ -10,6 +10,8 @@ use std::sync::{Arc, Mutex};
 use keepstone_core::presence::{PresenceAttestation, PresenceRequest};
 use keepstone_core::{DropId, SignedDrop};
 use keepstone_crypto::Identity;
+use keepstone_log::sth::STH_ENCODED_LEN;
+use keepstone_log::SignedTreeHead;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -112,7 +114,9 @@ pub async fn respond(
             | Message::Chunk(..)
             | Message::Presence(_)
             | Message::Attestation(_)
-            | Message::Stored(_) => {
+            | Message::Stored(_)
+            | Message::GetSth
+            | Message::Sth(_) => {
                 send(stream, &Message::Bye).await?;
                 break;
             }
@@ -197,6 +201,61 @@ pub async fn push_chunk(
     match recv(&mut stream).await? {
         Some(Message::Stored(_)) => Ok(true),
         _ => Ok(false),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Signed tree head gossip (multi-log verifiability)
+// ---------------------------------------------------------------------------
+
+async fn sth_respond(stream: &mut TcpStream, sth: &SignedTreeHead) -> std::io::Result<()> {
+    while let Some(message) = recv(stream).await? {
+        match message {
+            Message::Hello(version) => send(stream, &Message::Hello(version)).await?,
+            Message::GetSth => send(stream, &Message::Sth(sth.to_bytes().to_vec())).await?,
+            Message::Bye => {
+                send(stream, &Message::Bye).await?;
+                break;
+            }
+            _ => {
+                send(stream, &Message::Bye).await?;
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Serve a signed tree head until the task is aborted.
+pub async fn serve_sth(listener: TcpListener, sth: SignedTreeHead) {
+    while let Ok((mut stream, _)) = listener.accept().await {
+        let sth = sth.clone();
+        tokio::spawn(async move {
+            let _ = sth_respond(&mut stream, &sth).await;
+        });
+    }
+}
+
+/// Fetch a signed tree head from a log node.
+///
+/// The caller MUST verify the returned STH's signature.
+///
+/// # Errors
+/// Returns an I/O error on transport failure or a malformed STH.
+pub async fn fetch_sth(addr: &str) -> std::io::Result<Option<SignedTreeHead>> {
+    let mut stream = TcpStream::connect(addr).await?;
+    send(&mut stream, &Message::Hello(PROTOCOL_VERSION)).await?;
+    let _ = recv(&mut stream).await?;
+    send(&mut stream, &Message::GetSth).await?;
+    match recv(&mut stream).await? {
+        Some(Message::Sth(bytes)) => {
+            let encoded: [u8; STH_ENCODED_LEN] = bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| io_error("bad sth length"))?;
+            Ok(Some(SignedTreeHead::from_bytes(&encoded)))
+        }
+        _ => Ok(None),
     }
 }
 
@@ -348,6 +407,23 @@ mod tests {
         // Garbage is rejected and does not evict the valid drop.
         assert!(!push_drop(&addr, vec![0xAA; 64]).await.unwrap());
         assert_eq!(fetch(&addr, id).await.unwrap(), Some(signed.raw));
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn fetches_and_verifies_a_signed_tree_head() {
+        let log = keepstone_crypto::Identity::generate();
+        let root = keepstone_log::merkle::mth(&[keepstone_log::merkle::leaf_hash(b"a")]);
+        let sth = SignedTreeHead::sign(&log, 1, root, 1_234);
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let handle = tokio::spawn(serve_sth(listener, sth.clone()));
+
+        let fetched = fetch_sth(&addr).await.unwrap().unwrap();
+        assert_eq!(fetched, sth);
+        fetched.verify().unwrap();
 
         handle.abort();
     }

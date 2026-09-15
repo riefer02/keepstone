@@ -8,6 +8,9 @@ use crate::LogError;
 /// Domain-separation context for STH signatures.
 pub const STH_CONTEXT: &[u8] = b"keepstone/v1/sth";
 
+/// Byte length of the fixed STH encoding.
+pub const STH_ENCODED_LEN: usize = 8 + 32 + 8 + 32 + 64;
+
 /// A log's signed commitment to its current tree.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SignedTreeHead {
@@ -60,6 +63,40 @@ impl SignedTreeHead {
         )
         .map_err(|_| LogError::TreeHeadInvalid)
     }
+
+    /// Fixed-size encoding: `tree_size(8) || root(32) || timestamp(8) || log_public(32) || signature(64)`.
+    #[must_use]
+    pub fn to_bytes(&self) -> [u8; STH_ENCODED_LEN] {
+        let mut out = [0u8; STH_ENCODED_LEN];
+        out[0..8].copy_from_slice(&self.tree_size.to_be_bytes());
+        out[8..40].copy_from_slice(&self.root);
+        out[40..48].copy_from_slice(&self.timestamp.to_be_bytes());
+        out[48..80].copy_from_slice(&self.log_public);
+        out[80..144].copy_from_slice(&self.signature);
+        out
+    }
+
+    /// Decode the fixed-size encoding (does not verify; call [`SignedTreeHead::verify`]).
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8; STH_ENCODED_LEN]) -> Self {
+        let mut tree_size = [0u8; 8];
+        tree_size.copy_from_slice(&bytes[0..8]);
+        let mut root = [0u8; 32];
+        root.copy_from_slice(&bytes[8..40]);
+        let mut timestamp = [0u8; 8];
+        timestamp.copy_from_slice(&bytes[40..48]);
+        let mut log_public = [0u8; 32];
+        log_public.copy_from_slice(&bytes[48..80]);
+        let mut signature = [0u8; 64];
+        signature.copy_from_slice(&bytes[80..144]);
+        Self {
+            tree_size: u64::from_be_bytes(tree_size),
+            root,
+            timestamp: u64::from_be_bytes(timestamp),
+            log_public,
+            signature,
+        }
+    }
 }
 
 /// Whether two signed tree heads from the same log equivocate.
@@ -84,6 +121,10 @@ mod tests {
         let root = mth(&[leaf_hash(b"a"), leaf_hash(b"b")]);
         let sth = SignedTreeHead::sign(&log, 2, root, 1_700_000_000);
         sth.verify().unwrap();
+        // Fixed-size encoding round-trips and preserves the signature.
+        let restored = SignedTreeHead::from_bytes(&sth.to_bytes());
+        assert_eq!(restored, sth);
+        restored.verify().unwrap();
     }
 
     #[test]

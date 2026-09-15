@@ -151,6 +151,17 @@ enum Command {
         /// Drop id (hex).
         id: String,
     },
+    /// Serve the local log's signed tree head over TCP.
+    SthServe {
+        /// Address to listen on.
+        #[arg(long, default_value = "127.0.0.1:7791")]
+        listen: String,
+    },
+    /// Fetch and verify a signed tree head from a log peer.
+    SthFetch {
+        /// Peer address, e.g. `127.0.0.1:7791`.
+        peer: String,
+    },
     /// Serve drops to peers over libp2p (QUIC + TCP).
     P2pServe {
         /// Multiaddr to listen on.
@@ -212,6 +223,8 @@ async fn main() -> Result<()> {
         Command::Serve { listen } => serve(&cli.data_dir, &listen).await,
         Command::Fetch { peer, id } => fetch(&cli.data_dir, &peer, &id).await,
         Command::Push { peer, id } => push(&cli.data_dir, &peer, &id).await,
+        Command::SthServe { listen } => sth_serve(&cli.data_dir, &listen).await,
+        Command::SthFetch { peer } => sth_fetch(&peer).await,
         Command::P2pServe { listen } => p2p_serve(&cli.data_dir, &listen).await,
         Command::P2pFetch { peer, id } => p2p_fetch(&cli.data_dir, &peer, &id).await,
     }
@@ -1063,6 +1076,47 @@ async fn push(dir: &Path, peer: &str, id_text: &str) -> Result<()> {
         chunks += 1;
     }
     println!("pushed {id} to {peer} ({chunks} chunks, stored as ciphertext)");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Signed tree head gossip
+// ---------------------------------------------------------------------------
+
+fn local_sth(dir: &Path) -> Result<SignedTreeHead> {
+    let entries = load_log_entries(dir)?;
+    let leaves: Vec<merkle::Hash> = entries.iter().map(|e| merkle::leaf_hash(e)).collect();
+    let root = merkle::mth(&leaves);
+    let log = log_identity(dir)?;
+    Ok(SignedTreeHead::sign(
+        &log,
+        u64::try_from(leaves.len())?,
+        root,
+        SystemClock.now_unix(),
+    ))
+}
+
+async fn sth_serve(dir: &Path, listen: &str) -> Result<()> {
+    let sth = local_sth(dir)?;
+    let listener = tokio::net::TcpListener::bind(listen)
+        .await
+        .with_context(|| format!("binding {listen}"))?;
+    println!("serving STH (tree size {}) on {listen}", sth.tree_size);
+    net::serve_sth(listener, sth).await;
+    Ok(())
+}
+
+async fn sth_fetch(peer: &str) -> Result<()> {
+    let sth = net::fetch_sth(peer)
+        .await
+        .with_context(|| format!("fetching STH from {peer}"))?
+        .ok_or_else(|| anyhow!("peer {peer} did not return an STH"))?;
+    sth.verify().context("STH signature invalid")?;
+    println!("tree size:  {}", sth.tree_size);
+    println!("root:       {}", hex::encode(sth.root));
+    println!("timestamp:  {}", sth.timestamp);
+    println!("log:        {}", hex::encode(sth.log_public));
+    println!("signature:  ok");
     Ok(())
 }
 

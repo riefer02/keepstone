@@ -184,6 +184,8 @@ Message = [ tag:uint, payload:bytes ]
 | 9 | Put | raw signed envelope (offer for storage) |
 | 10 | Stored(drop_id) | `drop_id` (32 bytes) |
 | 11 | PutChunk(drop_id, index, data) | `drop_id(32) || index_be32 || data` |
+| 12 | GetSth | empty (request a log's signed tree head) |
+| 13 | Sth | 144-byte signed tree head encoding |
 
 **Framing (reference TCP):** `u32_be length || message`; max frame `8 MiB`.
 **libp2p:** the same encoded `Message` is the request/response body, protocol

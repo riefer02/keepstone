@@ -31,6 +31,8 @@ const TAG_ATTESTATION: u64 = 8;
 const TAG_PUT: u64 = 9;
 const TAG_STORED: u64 = 10;
 const TAG_PUT_CHUNK: u64 = 11;
+const TAG_GET_STH: u64 = 12;
+const TAG_STH: u64 = 13;
 
 /// A peer protocol message.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -57,6 +59,10 @@ pub enum Message {
     PutChunk(DropId, u32, Vec<u8>),
     /// Reply confirming a stored drop.
     Stored(DropId),
+    /// Ask a log node for its signed tree head.
+    GetSth,
+    /// A signed tree head (fixed-size encoding).
+    Sth(Vec<u8>),
     /// Polite close.
     Bye,
 }
@@ -123,6 +129,14 @@ impl Message {
                 enc.uint(TAG_STORED);
                 enc.bytes(id.as_bytes());
             }
+            Self::GetSth => {
+                enc.uint(TAG_GET_STH);
+                enc.bytes(&[]);
+            }
+            Self::Sth(bytes) => {
+                enc.uint(TAG_STH);
+                enc.bytes(bytes);
+            }
             Self::Bye => {
                 enc.uint(TAG_BYE);
                 enc.bytes(&[]);
@@ -168,6 +182,8 @@ impl Message {
                 Ok(Self::PutChunk(id, index, payload[36..].to_vec()))
             }
             TAG_STORED => Ok(Self::Stored(id_from(payload)?)),
+            TAG_GET_STH => Ok(Self::GetSth),
+            TAG_STH => Ok(Self::Sth(payload.to_vec())),
             TAG_BYE => Ok(Self::Bye),
             _ => Err(NodeError::Protocol("unknown tag")),
         }
@@ -235,6 +251,8 @@ mod tests {
         round_trip(Message::Put(vec![7, 8]));
         round_trip(Message::PutChunk(DropId::of(b"f"), 3, vec![9, 9]));
         round_trip(Message::Stored(DropId::of(b"e")));
+        round_trip(Message::GetSth);
+        round_trip(Message::Sth(vec![1u8; 144]));
         round_trip(Message::Bye);
     }
 

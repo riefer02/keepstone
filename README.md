@@ -101,6 +101,13 @@ keepstone --data-dir ./demo/bob fetch 127.0.0.1:7790 <id>
 keepstone --data-dir ./demo/bob drop-open <id>
 ```
 
+### Signed tree head gossip
+
+```bash
+keepstone --data-dir ./demo/alice sth-serve --listen 127.0.0.1:7791
+keepstone --data-dir ./demo/bob sth-fetch 127.0.0.1:7791   # verifies the log signature
+```
+
 ### Two-node exchange over libp2p (QUIC + TCP, Noise)
 
 ```bash
