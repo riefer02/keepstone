@@ -28,6 +28,8 @@ cargo xtask ci      # fmt check + clippy (-D warnings) + tests
 cargo xtask test    # tests only
 cargo xtask clippy
 cargo xtask fmt
+cargo xtask demo    # end-to-end demo (builds the CLI, runs a full scenario)
+cargo xtask deny    # supply-chain: licenses, advisories, bans, sources
 ```
 
 ### Ground rules

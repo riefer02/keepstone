@@ -159,6 +159,7 @@ fn main() -> ExitCode {
             "warnings",
         ]],
         "test" => vec![vec!["test", "--workspace"]],
+        "deny" => vec![vec!["deny", "check"]],
         "ci" => vec![
             vec!["fmt", "--all", "--", "--check"],
             vec![
@@ -179,7 +180,7 @@ fn main() -> ExitCode {
             };
         }
         _ => {
-            println!("tasks: fmt | fmt-check | clippy | test | ci | demo");
+            println!("tasks: fmt | fmt-check | clippy | test | ci | demo | deny");
             return ExitCode::SUCCESS;
         }
     };

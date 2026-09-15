@@ -26,3 +26,11 @@ jobs:
         run: cargo test --workspace
       - name: Docs
         run: cargo doc --workspace --no-deps
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          rust-version: "1.88.0"
