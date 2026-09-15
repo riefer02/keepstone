@@ -28,6 +28,9 @@ const TAG_WANT_CHUNK: u64 = 5;
 const TAG_CHUNK: u64 = 6;
 const TAG_PRESENCE: u64 = 7;
 const TAG_ATTESTATION: u64 = 8;
+const TAG_PUT: u64 = 9;
+const TAG_STORED: u64 = 10;
+const TAG_PUT_CHUNK: u64 = 11;
 
 /// A peer protocol message.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -48,6 +51,12 @@ pub enum Message {
     Presence(Vec<u8>),
     /// A witness attestation (encoded `PresenceAttestation`).
     Attestation(Vec<u8>),
+    /// Offer a signed envelope to a peer for storage (federated relay).
+    Put(Vec<u8>),
+    /// Offer one ciphertext chunk to a peer for storage.
+    PutChunk(DropId, u32, Vec<u8>),
+    /// Reply confirming a stored drop.
+    Stored(DropId),
     /// Polite close.
     Bye,
 }
@@ -98,6 +107,22 @@ impl Message {
                 });
                 enc.bytes(bytes);
             }
+            Self::Put(raw) => {
+                enc.uint(TAG_PUT);
+                enc.bytes(raw);
+            }
+            Self::PutChunk(id, index, data) => {
+                enc.uint(TAG_PUT_CHUNK);
+                let mut payload = Vec::with_capacity(36 + data.len());
+                payload.extend_from_slice(id.as_bytes());
+                payload.extend_from_slice(&index.to_be_bytes());
+                payload.extend_from_slice(data);
+                enc.bytes(&payload);
+            }
+            Self::Stored(id) => {
+                enc.uint(TAG_STORED);
+                enc.bytes(id.as_bytes());
+            }
             Self::Bye => {
                 enc.uint(TAG_BYE);
                 enc.bytes(&[]);
@@ -137,6 +162,12 @@ impl Message {
             }
             TAG_PRESENCE => Ok(Self::Presence(payload.to_vec())),
             TAG_ATTESTATION => Ok(Self::Attestation(payload.to_vec())),
+            TAG_PUT => Ok(Self::Put(payload.to_vec())),
+            TAG_PUT_CHUNK => {
+                let (id, index) = id_index_from(payload)?;
+                Ok(Self::PutChunk(id, index, payload[36..].to_vec()))
+            }
+            TAG_STORED => Ok(Self::Stored(id_from(payload)?)),
             TAG_BYE => Ok(Self::Bye),
             _ => Err(NodeError::Protocol("unknown tag")),
         }
@@ -201,6 +232,9 @@ mod tests {
         round_trip(Message::Chunk(DropId::of(b"d"), 2, vec![9, 8, 7]));
         round_trip(Message::Presence(vec![1, 2, 3]));
         round_trip(Message::Attestation(vec![4, 5, 6]));
+        round_trip(Message::Put(vec![7, 8]));
+        round_trip(Message::PutChunk(DropId::of(b"f"), 3, vec![9, 9]));
+        round_trip(Message::Stored(DropId::of(b"e")));
         round_trip(Message::Bye);
     }
 

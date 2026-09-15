@@ -144,6 +144,13 @@ enum Command {
         /// Drop id (hex).
         id: String,
     },
+    /// Push a local drop to a peer for storage (federated relay).
+    Push {
+        /// Peer address, e.g. `127.0.0.1:7777`.
+        peer: String,
+        /// Drop id (hex).
+        id: String,
+    },
     /// Serve drops to peers over libp2p (QUIC + TCP).
     P2pServe {
         /// Multiaddr to listen on.
@@ -204,6 +211,7 @@ async fn main() -> Result<()> {
         Command::LogAnchors => log_anchors(&cli.data_dir),
         Command::Serve { listen } => serve(&cli.data_dir, &listen).await,
         Command::Fetch { peer, id } => fetch(&cli.data_dir, &peer, &id).await,
+        Command::Push { peer, id } => push(&cli.data_dir, &peer, &id).await,
         Command::P2pServe { listen } => p2p_serve(&cli.data_dir, &listen).await,
         Command::P2pFetch { peer, id } => p2p_fetch(&cli.data_dir, &peer, &id).await,
     }
@@ -1029,6 +1037,32 @@ async fn fetch(dir: &Path, peer: &str, id_text: &str) -> Result<()> {
     append_log_entry(dir, &raw).ok();
 
     println!("fetched {id} ({received} chunks) from {peer}");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Federated relay: push a local drop to a peer
+// ---------------------------------------------------------------------------
+
+async fn push(dir: &Path, peer: &str, id_text: &str) -> Result<()> {
+    let id = DropId::from_hex(id_text)?;
+    let raw = fs::read(drop_path(dir, &id)).with_context(|| format!("no such drop: {id_text}"))?;
+    let signed = SignedDrop::decode(&raw)?;
+    let body = signed.body()?;
+
+    if !net::push_drop(peer, raw).await? {
+        bail!("peer rejected the drop");
+    }
+    let mut chunks = 0u32;
+    for index in 0..body.chunk_count {
+        let path = chunks_dir(dir, &id).join(format!("{index}.bin"));
+        let data = fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+        if !net::push_chunk(peer, id, index, data).await? {
+            bail!("peer rejected chunk {index}");
+        }
+        chunks += 1;
+    }
+    println!("pushed {id} to {peer} ({chunks} chunks, stored as ciphertext)");
     Ok(())
 }
 

@@ -24,4 +24,5 @@ updated as milestones land.
 | Resistant to a quantum adversary | Hybrid X25519 + ML-KEM-768 sealing **and** Ed25519 + ML-DSA-65 signatures, both wired into the drop envelope; sound if **either** primitive holds | ✅ M5 |
 | Drops can target a group | Repeat `--to`; each recipient gets its own sealed content key + tag, padded with decoys; non-recipients are refused | ✅ M5 |
 | Multi-device recipients | Add several devices under one contact name; a single drop seals to every device and opens on each | ✅ M5 |
+| Delivery does not require the author online | Federated store-and-forward: `push` ciphertext to a relay, `fetch` later; the relay holds no keys | ✅ M5 |
 | Not audited | — | ⚠️ No independent audit yet |

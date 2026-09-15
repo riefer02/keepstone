@@ -89,6 +89,18 @@ keepstone --data-dir ./demo/bob drop-open <id>
 keepstone --data-dir ./demo/bob log-verify <id>
 ```
 
+### Federated store-and-forward (author can be offline)
+
+```bash
+# A relay holds no keys and starts empty.
+keepstone --data-dir ./demo/relay serve --listen 127.0.0.1:7790
+# Alice pushes ciphertext to the relay.
+keepstone --data-dir ./demo/alice push 127.0.0.1:7790 <id>
+# Bob fetches from the relay later, even if Alice is offline.
+keepstone --data-dir ./demo/bob fetch 127.0.0.1:7790 <id>
+keepstone --data-dir ./demo/bob drop-open <id>
+```
+
 ### Two-node exchange over libp2p (QUIC + TCP, Noise)
 
 ```bash

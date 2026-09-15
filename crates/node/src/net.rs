@@ -8,7 +8,7 @@
 use std::sync::{Arc, Mutex};
 
 use keepstone_core::presence::{PresenceAttestation, PresenceRequest};
-use keepstone_core::DropId;
+use keepstone_core::{DropId, SignedDrop};
 use keepstone_crypto::Identity;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -85,12 +85,34 @@ pub async fn respond(
                     None => send(stream, &Message::Missing(id)).await?,
                 }
             }
+            Message::Put(raw) => {
+                // Store only signature-valid envelopes; a relay holds ciphertext.
+                match SignedDrop::decode(&raw) {
+                    Ok(signed) if signed.verify().is_ok() => {
+                        let id = signed.id();
+                        if let Ok(mut guard) = store.lock() {
+                            guard.put_drop(id, raw);
+                        }
+                        send(stream, &Message::Stored(id)).await?;
+                    }
+                    _ => {
+                        send(stream, &Message::Bye).await?;
+                    }
+                }
+            }
+            Message::PutChunk(id, index, data) => {
+                if let Ok(mut guard) = store.lock() {
+                    guard.put_chunk(id, index, data);
+                }
+                send(stream, &Message::Stored(id)).await?;
+            }
             Message::Bye
             | Message::Drop(_)
             | Message::Missing(_)
             | Message::Chunk(..)
             | Message::Presence(_)
-            | Message::Attestation(_) => {
+            | Message::Attestation(_)
+            | Message::Stored(_) => {
                 send(stream, &Message::Bye).await?;
                 break;
             }
@@ -138,6 +160,43 @@ pub async fn fetch_chunk(addr: &str, id: DropId, index: u32) -> std::io::Result<
         Some(Message::Chunk(_, _, data)) => Ok(Some(data)),
         Some(Message::Missing(_)) => Ok(None),
         _ => Err(io_error("unexpected reply")),
+    }
+}
+
+/// Push a signed envelope to a peer for storage (federated relay).
+///
+/// Returns `true` if the peer confirmed storage.
+///
+/// # Errors
+/// Returns an I/O error on transport failure.
+pub async fn push_drop(addr: &str, raw: Vec<u8>) -> std::io::Result<bool> {
+    let mut stream = TcpStream::connect(addr).await?;
+    send(&mut stream, &Message::Hello(PROTOCOL_VERSION)).await?;
+    let _ = recv(&mut stream).await?;
+    send(&mut stream, &Message::Put(raw)).await?;
+    match recv(&mut stream).await? {
+        Some(Message::Stored(_)) => Ok(true),
+        _ => Ok(false),
+    }
+}
+
+/// Push one ciphertext chunk to a peer for storage.
+///
+/// # Errors
+/// Returns an I/O error on transport failure.
+pub async fn push_chunk(
+    addr: &str,
+    id: DropId,
+    index: u32,
+    data: Vec<u8>,
+) -> std::io::Result<bool> {
+    let mut stream = TcpStream::connect(addr).await?;
+    send(&mut stream, &Message::Hello(PROTOCOL_VERSION)).await?;
+    let _ = recv(&mut stream).await?;
+    send(&mut stream, &Message::PutChunk(id, index, data)).await?;
+    match recv(&mut stream).await? {
+        Some(Message::Stored(_)) => Ok(true),
+        _ => Ok(false),
     }
 }
 
@@ -241,6 +300,54 @@ mod tests {
         // Absent data returns None rather than an error.
         assert_eq!(fetch(&addr, DropId::of(b"absent")).await.unwrap(), None);
         assert_eq!(fetch_chunk(&addr, id, 9).await.unwrap(), None);
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn relay_stores_pushed_drops_and_serves_them() {
+        let store = Arc::new(Mutex::new(MemoryStore::new()));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let handle = tokio::spawn(serve(listener, Arc::clone(&store)));
+
+        let identity = keepstone_crypto::Identity::generate();
+        let body = keepstone_core::DropBody {
+            version: keepstone_core::PROTOCOL_VERSION,
+            suite: keepstone_crypto::CryptoSuite::Classical25519.id(),
+            cell: "8928308280fffff".to_owned(),
+            ring: 2,
+            created_at: 1_700_000_000,
+            expiry: 0,
+            mode: keepstone_core::Mode::Capability.id(),
+            chunk_size: 65536,
+            chunk_count: 1,
+            content_root: [1u8; 32],
+            prefix: [2u8; 20],
+            drop_nonce: [3u8; 16],
+            pow_nonce: 0,
+            wrapped_keys: vec![],
+        };
+        let signed = keepstone_core::SignedDrop::sign(&identity, &body);
+        let id = signed.id();
+
+        // The relay starts empty.
+        assert_eq!(fetch(&addr, id).await.unwrap(), None);
+
+        // After a push it serves the envelope to anyone.
+        assert!(push_drop(&addr, signed.raw.clone()).await.unwrap());
+        assert_eq!(fetch(&addr, id).await.unwrap(), Some(signed.raw.clone()));
+
+        // Chunks can be pushed and fetched too.
+        assert!(push_chunk(&addr, id, 0, vec![7u8; 32]).await.unwrap());
+        assert_eq!(
+            fetch_chunk(&addr, id, 0).await.unwrap(),
+            Some(vec![7u8; 32])
+        );
+
+        // Garbage is rejected and does not evict the valid drop.
+        assert!(!push_drop(&addr, vec![0xAA; 64]).await.unwrap());
+        assert_eq!(fetch(&addr, id).await.unwrap(), Some(signed.raw));
 
         handle.abort();
     }
