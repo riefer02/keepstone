@@ -16,7 +16,7 @@ updated as milestones land.
 | Peers can exchange drops | Reference TCP protocol and **libp2p** (QUIC + TCP, Noise) request/response; in-process test + two-node CLI demo | ✅ M2 |
 | Drops from unknown authors reach nearby peers | **gossipsub cell topics**: a subscriber stores a valid drop published by a peer it never requested from | ✅ M2 |
 | Peers can find who serves a quiet cell | **Kademlia provider records**: `find_providers` returns the peer advertising a cell | ✅ M2 |
-| It actually works | Multi-chunk (200 KB) round-trip; **92 tests** incl. property tests | ✅ M4 |
+| It actually works | Multi-chunk (200 KB) round-trip; **94 tests** incl. property tests; `cargo xtask demo` end-to-end | ✅ M4 |
 | Untrusted input cannot crash the parser | `cargo-fuzz` targets for drop/protocol/presence decoders: ~30M executions, no crashes | ✅ M4 |
 | Only when they're there | k-of-n presence certificates with distinct-witness + expiry checks; **networked witness collection**; place-locked release via Shamir custodians | ✅ M3 |
 | Secret is unreadable without a threshold of custodians | Shamir 3-of-5 split/combine tests; fewer shares cannot decrypt | ✅ M3 |
