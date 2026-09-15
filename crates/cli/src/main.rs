@@ -180,6 +180,65 @@ enum Command {
         /// Drop id (hex).
         id: String,
     },
+    /// Organize a location hunt (M-Pilot kit).
+    Hunt {
+        #[command(subcommand)]
+        cmd: HuntCmd,
+    },
+}
+
+/// Subcommands for organizing a hunt.
+#[derive(Debug, Subcommand)]
+enum HuntCmd {
+    /// Create a new, empty hunt.
+    Create {
+        /// Hunt name.
+        name: String,
+    },
+    /// Register a participant (must already be a contact).
+    AddParticipant {
+        /// Hunt name.
+        name: String,
+        /// Contact name.
+        contact: String,
+    },
+    /// Add a drop location and clue.
+    AddDrop {
+        /// Hunt name.
+        name: String,
+        /// Latitude.
+        #[arg(long, allow_hyphen_values = true)]
+        lat: f64,
+        /// Longitude.
+        #[arg(long, allow_hyphen_values = true)]
+        lng: f64,
+        /// Delivery k-ring radius.
+        #[arg(long, default_value_t = 2)]
+        ring: u32,
+        /// Crypto suite: `classical` or `hybrid`.
+        #[arg(long, default_value = "classical")]
+        suite: String,
+        /// The clue/instruction placed at this location.
+        message: String,
+    },
+    /// Create the drops for all participants and record their ids.
+    Seed {
+        /// Hunt name.
+        name: String,
+    },
+    /// Print the hunt.
+    Show {
+        /// Hunt name.
+        name: String,
+    },
+    /// Generate a standalone map page for the organizer.
+    Map {
+        /// Hunt name.
+        name: String,
+        /// Output HTML file.
+        #[arg(long)]
+        out: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -208,18 +267,26 @@ async fn main() -> Result<()> {
             file,
             ttl,
             suite,
-        } => drop_create(
-            &cli.data_dir,
-            &to,
-            lat,
-            lng,
-            res,
-            ring,
-            message,
-            file,
-            ttl,
-            &suite,
-        ),
+        } => {
+            let created = drop_create(
+                &cli.data_dir,
+                &to,
+                lat,
+                lng,
+                res,
+                ring,
+                message,
+                file,
+                ttl,
+                &suite,
+            )?;
+            println!("drop created");
+            println!("  id:      {}", created.id);
+            println!("  cell:    {}", created.cell);
+            println!("  chunks:  {}", created.chunks);
+            println!("  bytes:   {}", created.bytes);
+            Ok(())
+        }
         Command::DropOpen { id, out } => drop_open(&cli.data_dir, &id, out.as_deref()),
         Command::DropList { lat, lng, ring } => drop_list(&cli.data_dir, lat, lng, ring),
         Command::LogVerify { id } => log_verify(&cli.data_dir, &id),
@@ -231,6 +298,7 @@ async fn main() -> Result<()> {
         Command::Push { peer, id } => push(&cli.data_dir, &peer, &id).await,
         Command::SthServe { listen } => sth_serve(&cli.data_dir, &listen).await,
         Command::SthFetch { peer } => sth_fetch(&peer).await,
+        Command::Hunt { cmd } => hunt(&cli.data_dir, cmd),
         Command::P2pServe { listen } => p2p_serve(&cli.data_dir, &listen).await,
         Command::P2pFetch { peer, id } => p2p_fetch(&cli.data_dir, &peer, &id).await,
     }
@@ -483,6 +551,14 @@ fn drop_path(dir: &Path, id: &DropId) -> PathBuf {
     drops_dir(dir).join(format!("{}.signed", id.to_hex()))
 }
 
+/// The result of creating a drop.
+struct CreatedDrop {
+    id: DropId,
+    cell: String,
+    chunks: u32,
+    bytes: usize,
+}
+
 fn drop_create(
     dir: &Path,
     to: &[String],
@@ -494,7 +570,7 @@ fn drop_create(
     file: Option<PathBuf>,
     ttl: u64,
     suite: &str,
-) -> Result<()> {
+) -> Result<CreatedDrop> {
     let identity = load_identity(dir)?;
     let contacts = load_contacts(dir)?;
 
@@ -630,12 +706,12 @@ fn drop_create(
     // Append to the local transparency log.
     append_log_entry(dir, &signed.raw)?;
 
-    println!("drop created");
-    println!("  id:      {id}");
-    println!("  cell:    {}", cell.to_hex());
-    println!("  chunks:  {}", framing.total);
-    println!("  bytes:   {}", plaintext.len());
-    Ok(())
+    Ok(CreatedDrop {
+        id,
+        cell: cell.to_hex(),
+        chunks: framing.total,
+        bytes: plaintext.len(),
+    })
 }
 
 fn load_chunks(dir: &Path, id: &DropId, count: u32) -> Result<Vec<Vec<u8>>> {
@@ -1118,6 +1194,240 @@ async fn push(dir: &Path, peer: &str, id_text: &str) -> Result<()> {
     }
     println!("pushed {id} to {peer} ({chunks} chunks, stored as ciphertext)");
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Hunt (M-Pilot organizer kit)
+// ---------------------------------------------------------------------------
+
+fn hunts_dir(dir: &Path) -> PathBuf {
+    dir.join("hunts")
+}
+
+fn hunt_path(dir: &Path, name: &str) -> PathBuf {
+    hunts_dir(dir).join(format!("{name}.json"))
+}
+
+fn load_hunt(dir: &Path, name: &str) -> Result<serde_json::Value> {
+    let text =
+        fs::read_to_string(hunt_path(dir, name)).with_context(|| format!("no hunt `{name}`"))?;
+    Ok(serde_json::from_str(&text)?)
+}
+
+fn save_hunt(dir: &Path, name: &str, value: &serde_json::Value) -> Result<()> {
+    fs::create_dir_all(hunts_dir(dir)).ok();
+    fs::write(hunt_path(dir, name), serde_json::to_string_pretty(value)?)
+        .context("writing hunt")?;
+    Ok(())
+}
+
+fn hunt(dir: &Path, cmd: HuntCmd) -> Result<()> {
+    match cmd {
+        HuntCmd::Create { name } => {
+            if hunt_path(dir, &name).exists() {
+                bail!("hunt `{name}` already exists");
+            }
+            let value = serde_json::json!({ "name": name, "participants": [], "drops": [] });
+            save_hunt(dir, &name, &value)?;
+            println!("hunt `{name}` created");
+            Ok(())
+        }
+        HuntCmd::AddParticipant { name, contact } => {
+            let contacts = load_contacts(dir)?;
+            if !contacts.iter().any(|(n, ..)| n == &contact) {
+                bail!("unknown contact `{contact}`; add them with `contact-add` first");
+            }
+            let mut value = load_hunt(dir, &name)?;
+            let participants = value["participants"]
+                .as_array_mut()
+                .ok_or_else(|| anyhow!("malformed hunt file"))?;
+            if !participants
+                .iter()
+                .any(|p| p.as_str() == Some(contact.as_str()))
+            {
+                participants.push(serde_json::Value::String(contact.clone()));
+            }
+            save_hunt(dir, &name, &value)?;
+            println!("added participant `{contact}` to `{name}`");
+            Ok(())
+        }
+        HuntCmd::AddDrop {
+            name,
+            lat,
+            lng,
+            ring,
+            suite,
+            message,
+        } => {
+            if !suite.eq_ignore_ascii_case("classical") && !suite.eq_ignore_ascii_case("hybrid") {
+                bail!("unknown suite `{suite}`");
+            }
+            let mut value = load_hunt(dir, &name)?;
+            let drops = value["drops"]
+                .as_array_mut()
+                .ok_or_else(|| anyhow!("malformed hunt file"))?;
+            drops.push(serde_json::json!({
+                "lat": lat, "lng": lng, "ring": ring, "suite": suite,
+                "message": message, "id": serde_json::Value::Null,
+            }));
+            save_hunt(dir, &name, &value)?;
+            println!("added drop at {lat},{lng} to `{name}`");
+            Ok(())
+        }
+        HuntCmd::Seed { name } => hunt_seed(dir, &name),
+        HuntCmd::Show { name } => hunt_show(dir, &name),
+        HuntCmd::Map { name, out } => hunt_map(dir, &name, &out),
+    }
+}
+
+fn hunt_seed(dir: &Path, name: &str) -> Result<()> {
+    let mut value = load_hunt(dir, name)?;
+    let participants: Vec<String> = value["participants"]
+        .as_array()
+        .map(|array| {
+            array
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    if participants.is_empty() {
+        bail!("hunt `{name}` has no participants");
+    }
+    let drops = value["drops"]
+        .as_array_mut()
+        .ok_or_else(|| anyhow!("malformed hunt file"))?;
+    let mut seeded = 0u32;
+    for drop in drops.iter_mut() {
+        let already = drop
+            .get("id")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| !s.is_empty());
+        if already {
+            continue;
+        }
+        let lat = drop["lat"].as_f64().unwrap_or(0.0);
+        let lng = drop["lng"].as_f64().unwrap_or(0.0);
+        let ring = u32::try_from(drop["ring"].as_u64().unwrap_or(2))?;
+        let suite = drop["suite"].as_str().unwrap_or("classical").to_owned();
+        let message = drop["message"].as_str().unwrap_or("").to_owned();
+        let created = drop_create(
+            dir,
+            &participants,
+            lat,
+            lng,
+            9,
+            ring,
+            Some(message),
+            None,
+            0,
+            &suite,
+        )?;
+        drop["id"] = serde_json::Value::String(created.id.to_hex());
+        seeded += 1;
+    }
+    save_hunt(dir, name, &value)?;
+    println!("seeded {seeded} drop(s) for hunt `{name}`");
+    Ok(())
+}
+
+fn hunt_show(dir: &Path, name: &str) -> Result<()> {
+    let value = load_hunt(dir, name)?;
+    println!("hunt: {}", value["name"].as_str().unwrap_or(name));
+    let participants: Vec<String> = value["participants"]
+        .as_array()
+        .map(|array| {
+            array
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    println!("participants: {}", participants.join(", "));
+    if let Some(drops) = value["drops"].as_array() {
+        for (index, drop) in drops.iter().enumerate() {
+            println!(
+                "  {}. ({}, {}) ring={} suite={} id={}",
+                index + 1,
+                drop["lat"],
+                drop["lng"],
+                drop["ring"],
+                drop["suite"],
+                drop["id"].as_str().unwrap_or("(unseeded)")
+            );
+            println!("     {}", drop["message"].as_str().unwrap_or(""));
+        }
+    }
+    Ok(())
+}
+
+fn hunt_map(dir: &Path, name: &str, out: &Path) -> Result<()> {
+    let value = load_hunt(dir, name)?;
+    let drops: Vec<(f64, f64, String, String)> = value["drops"]
+        .as_array()
+        .map(|array| {
+            array
+                .iter()
+                .map(|drop| {
+                    (
+                        drop["lat"].as_f64().unwrap_or(0.0),
+                        drop["lng"].as_f64().unwrap_or(0.0),
+                        drop["message"].as_str().unwrap_or("").to_owned(),
+                        drop["id"].as_str().unwrap_or("(unseeded)").to_owned(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if drops.is_empty() {
+        bail!("hunt `{name}` has no drops");
+    }
+    let html = hunt_map_html(name, &drops);
+    fs::write(out, &html).with_context(|| format!("writing {}", out.display()))?;
+    println!("wrote {} ({} drops)", out.display(), drops.len());
+    Ok(())
+}
+
+fn hunt_map_html(name: &str, drops: &[(f64, f64, String, String)]) -> String {
+    let min_lat = drops.iter().map(|d| d.0).fold(f64::INFINITY, f64::min);
+    let max_lat = drops.iter().map(|d| d.0).fold(f64::NEG_INFINITY, f64::max);
+    let min_lng = drops.iter().map(|d| d.1).fold(f64::INFINITY, f64::min);
+    let max_lng = drops.iter().map(|d| d.1).fold(f64::NEG_INFINITY, f64::max);
+    let span_lat = (max_lat - min_lat).max(1e-6);
+    let span_lng = (max_lng - min_lng).max(1e-6);
+
+    let mut pins = String::new();
+    let mut list = String::new();
+    for (index, (lat, lng, message, id)) in drops.iter().enumerate() {
+        let x = 60.0 + (lng - min_lng) / span_lng * 680.0;
+        let y = 540.0 - (lat - min_lat) / span_lat * 480.0;
+        pins.push_str(&format!(
+            "<circle cx=\"{x:.1}\" cy=\"{y:.1}\" r=\"11\" fill=\"#1f6feb\" stroke=\"#ffffff\" stroke-width=\"2\"/><text x=\"{x:.1}\" y=\"{y:.1}\" dy=\"4\" text-anchor=\"middle\" font-size=\"11\" fill=\"#ffffff\">{}</text>\n",
+            index + 1
+        ));
+        list.push_str(&format!(
+            "<li><b>{}. clue</b><br><span class=\"coord\">{lat:.5}, {lng:.5}</span><br><code>{id}</code><br>{message}</li>\n",
+            index + 1
+        ));
+    }
+
+    format!(
+        r#"<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Hunt: {name}</title>
+<style>
+body{{font:15px/1.5 ui-monospace,Menlo,monospace;background:#0e1116;color:#d7dde5;margin:0;padding:24px}}
+h1{{font-size:18px}} .wrap{{display:flex;gap:24px;flex-wrap:wrap}}
+svg{{background:#161b22;border:1px solid #232a34;border-radius:10px}}
+ol{{max-width:440px}} li{{margin-bottom:14px}} code{{color:#58a6ff;font-size:12px;word-break:break-all}}
+.coord{{color:#8b95a1;font-size:12px}}
+</style></head>
+<body><h1>Hunt: {name}</h1>
+<div class="wrap">
+<svg width="800" height="600" viewBox="0 0 800 600">{pins}</svg>
+<ol>{list}</ol>
+</div></body></html>
+"#
+    )
 }
 
 // ---------------------------------------------------------------------------

@@ -28,4 +28,5 @@ updated as milestones land.
 | Anyone can audit a log's head | `sth-serve` / `sth-fetch`: a peer retrieves and verifies a log's signed tree head; equivocation detection applies | ✅ M5 |
 | A normal person can use it | Local JSON API + browser UI (`keepstone-daemon`): create, list, open, verify against the local node | ✅ M5 |
 | It can be deployed | `deploy/` Dockerfile + compose: a relay and a browser client, one command; runs as non-root, generates an identity on first run | ✅ M5 |
+| An organizer can run an event | `hunt create / add-participant / add-drop / seed / map` plus [docs/PILOT.md](PILOT.md); validated with a multi-participant hunt | ✅ M-Pilot |
 | Not audited | — | ⚠️ No independent audit yet |

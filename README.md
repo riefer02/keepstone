@@ -42,6 +42,18 @@ The UI lists nearby drops, creates drops (classical or **post-quantum**), opens
 them, and verifies log inclusion. API: `GET /api/id`, `GET|POST /api/contacts`,
 `GET|POST /api/drops`, `POST /api/drops/{id}/open`, `GET /api/log/{id}/verify`.
 
+### Organize a hunt (event pilot)
+
+```bash
+keepstone --data-dir ./org hunt create demo
+keepstone --data-dir ./org hunt add-participant demo alice
+keepstone --data-dir ./org hunt add-drop demo --lat 51.5007 --lng -0.1246 "Find the lion statue"
+keepstone --data-dir ./org hunt seed demo
+keepstone --data-dir ./org hunt map demo --out map.html
+```
+
+See [docs/PILOT.md](docs/PILOT.md) for the full organizer + participant guide.
+
 ### Deploy a relay + client with Docker
 
 ```bash
