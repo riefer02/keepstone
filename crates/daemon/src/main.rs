@@ -856,3 +856,166 @@ fn verify_log(dir: &Path, id_text: &str) -> Result<Value, String> {
         "sig_kind": signed.sig_kind,
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "keepstone-daemon-test-{}-{tag}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Write the same data-dir files the CLI's `keygen` would, plus a self-contact.
+    fn seed_identity(dir: &Path) {
+        let identity = Identity::generate();
+        fs::write(
+            dir.join("identity.txt"),
+            format!(
+                "{}\n{}\n",
+                hex::encode(identity.signing_secret_bytes()),
+                hex::encode(identity.ecdh_secret_bytes())
+            ),
+        )
+        .unwrap();
+        let hybrid = HybridKeypair::generate();
+        fs::write(
+            dir.join("hybrid.txt"),
+            hex::encode(hybrid.to_secret_bytes()),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("mldsa.txt"),
+            hex::encode(MlDsaKeypair::generate().to_seed()),
+        )
+        .unwrap();
+        let mut hybrid_public = hybrid.public().x25519.to_vec();
+        hybrid_public.extend_from_slice(&hybrid.public().kem);
+        fs::write(
+            dir.join("contacts.txt"),
+            format!(
+                "me {} {} {}\n",
+                hex::encode(identity.signing_public()),
+                hex::encode(identity.ecdh_public()),
+                hex::encode(hybrid_public)
+            ),
+        )
+        .unwrap();
+    }
+
+    fn request(method: &str, path: &str, body: Value) -> Request {
+        Request {
+            method: method.to_owned(),
+            path: path.to_owned(),
+            query: Vec::new(),
+            body: serde_json::to_vec(&body).unwrap(),
+        }
+    }
+
+    fn json(response: &Response) -> Value {
+        serde_json::from_slice(&response.body).unwrap()
+    }
+
+    #[test]
+    fn create_list_open_verify_round_trip() {
+        let dir = temp_dir("roundtrip");
+        seed_identity(&dir);
+
+        let created = route(
+            &dir,
+            &request(
+                "POST",
+                "/api/drops",
+                json!({ "to": ["me"], "lat": 51.5, "lng": -0.12, "suite": "hybrid", "message": "hello" }),
+            ),
+        );
+        assert_eq!(created.status, 201);
+        let id = json(&created)["id"].as_str().unwrap().to_owned();
+
+        let list = route(
+            &dir,
+            &Request {
+                method: "GET".to_owned(),
+                path: "/api/drops".to_owned(),
+                query: vec![
+                    ("lat".to_owned(), "51.5".to_owned()),
+                    ("lng".to_owned(), "-0.12".to_owned()),
+                    ("ring".to_owned(), "3".to_owned()),
+                ],
+                body: Vec::new(),
+            },
+        );
+        assert_eq!(json(&list)["drops"].as_array().unwrap().len(), 1);
+
+        let opened = route(
+            &dir,
+            &request("POST", &format!("/api/drops/{id}/open"), json!({})),
+        );
+        assert_eq!(json(&opened)["text"].as_str().unwrap(), "hello");
+
+        let verified = route(
+            &dir,
+            &request("GET", &format!("/api/log/{id}/verify"), json!({})),
+        );
+        let verified = json(&verified);
+        assert_eq!(verified["signature"], true);
+        assert_eq!(verified["inclusion"], true);
+        assert_eq!(verified["sig_kind"], 2);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn classical_drops_also_work() {
+        let dir = temp_dir("classical");
+        seed_identity(&dir);
+        let created = route(
+            &dir,
+            &request(
+                "POST",
+                "/api/drops",
+                json!({ "to": ["me"], "lat": 0.0, "lng": 0.0, "suite": "classical", "message": "plain" }),
+            ),
+        );
+        assert_eq!(created.status, 201);
+        let id = json(&created)["id"].as_str().unwrap().to_owned();
+        let opened = route(
+            &dir,
+            &request("POST", &format!("/api/drops/{id}/open"), json!({})),
+        );
+        assert_eq!(json(&opened)["text"].as_str().unwrap(), "plain");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn identity_and_contacts_endpoints() {
+        let dir = temp_dir("id");
+        seed_identity(&dir);
+        let id = json(&route(&dir, &request("GET", "/api/id", json!({}))));
+        assert_eq!(id["signing"].as_str().unwrap().len(), 64);
+        let contacts = json(&route(&dir, &request("GET", "/api/contacts", json!({}))));
+        assert_eq!(contacts["contacts"].as_array().unwrap().len(), 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn create_without_recipients_is_rejected() {
+        let dir = temp_dir("noreci");
+        seed_identity(&dir);
+        let response = route(
+            &dir,
+            &request(
+                "POST",
+                "/api/drops",
+                json!({ "lat": 0.0, "lng": 0.0, "message": "x" }),
+            ),
+        );
+        assert_eq!(response.status, 400);
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
