@@ -53,6 +53,7 @@ struct Request {
     method: String,
     path: String,
     query: Vec<(String, String)>,
+    headers: Vec<(String, String)>,
     body: Vec<u8>,
 }
 
@@ -94,6 +95,13 @@ async fn read_request(stream: &mut TcpStream) -> std::io::Result<Request> {
         .and_then(|(_, value)| value.trim().parse::<usize>().ok())
         .unwrap_or(0);
 
+    let headers: Vec<(String, String)> = headers
+        .split("\r\n")
+        .skip(1)
+        .filter_map(|line| line.split_once(':'))
+        .map(|(name, value)| (name.trim().to_ascii_lowercase(), value.trim().to_owned()))
+        .collect();
+
     let (path, query) = split_target(&target);
     let mut body = buffer[header_end..].to_vec();
     while body.len() < content_length {
@@ -109,6 +117,7 @@ async fn read_request(stream: &mut TcpStream) -> std::io::Result<Request> {
         method,
         path,
         query,
+        headers,
         body,
     })
 }
@@ -173,6 +182,7 @@ async fn respond(
         200 => "OK",
         201 => "Created",
         400 => "Bad Request",
+        401 => "Unauthorized",
         404 => "Not Found",
         500 => "Internal Server Error",
         _ => "OK",
@@ -194,11 +204,13 @@ async fn respond(
 async fn main() {
     let mut data_dir = PathBuf::from("./.keepstone-data");
     let mut listen = "127.0.0.1:8787".to_owned();
+    let mut token = std::env::var("KEEPSTONE_TOKEN").ok();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--data-dir" => data_dir = PathBuf::from(args.next().unwrap_or_default()),
             "--listen" => listen = args.next().unwrap_or(listen),
+            "--token" => token = args.next(),
             other => eprintln!("ignoring unknown argument: {other}"),
         }
     }
@@ -211,8 +223,13 @@ async fn main() {
         .await
         .unwrap_or_else(|error| panic!("bind {listen}: {error}"));
     println!(
-        "keepstone daemon on http://{listen}  (data: {})",
-        data_dir.display()
+        "keepstone daemon on http://{listen}  (data: {}){}",
+        data_dir.display(),
+        if token.is_some() {
+            "  [token auth enabled]"
+        } else {
+            ""
+        }
     );
 
     loop {
@@ -220,9 +237,10 @@ async fn main() {
             break;
         };
         let data_dir = data_dir.clone();
+        let token = token.clone();
         tokio::spawn(async move {
             let response = match read_request(&mut stream).await {
-                Ok(request) => route(&data_dir, &request),
+                Ok(request) => route(&data_dir, &request, token.as_deref()),
                 Err(_) => Response::json(400, &json!({ "error": "bad request" })),
             };
             let _ = respond(
@@ -262,9 +280,24 @@ impl Response {
     }
 }
 
-fn route(dir: &Path, request: &Request) -> Response {
+fn authorized(request: &Request, expected: &str) -> bool {
+    let expected = format!("Bearer {expected}");
+    request
+        .headers
+        .iter()
+        .any(|(name, value)| name == "authorization" && value == &expected)
+}
+
+fn route(dir: &Path, request: &Request, token: Option<&str>) -> Response {
     if request.method == "OPTIONS" {
         return Response::json(200, &json!({ "ok": true }));
+    }
+    if request.path.starts_with("/api/") {
+        if let Some(expected) = token {
+            if !authorized(request, expected) {
+                return Response::error(401, "unauthorized");
+            }
+        }
     }
     let path = request.path.as_str();
     match (request.method.as_str(), path) {
@@ -913,8 +946,14 @@ mod tests {
             method: method.to_owned(),
             path: path.to_owned(),
             query: Vec::new(),
+            headers: Vec::new(),
             body: serde_json::to_vec(&body).unwrap(),
         }
+    }
+
+    /// Route without token auth (the default configuration).
+    fn handle(dir: &Path, request: &Request) -> Response {
+        route(dir, request, None)
     }
 
     fn json(response: &Response) -> Value {
@@ -926,7 +965,7 @@ mod tests {
         let dir = temp_dir("roundtrip");
         seed_identity(&dir);
 
-        let created = route(
+        let created = handle(
             &dir,
             &request(
                 "POST",
@@ -937,7 +976,7 @@ mod tests {
         assert_eq!(created.status, 201);
         let id = json(&created)["id"].as_str().unwrap().to_owned();
 
-        let list = route(
+        let list = handle(
             &dir,
             &Request {
                 method: "GET".to_owned(),
@@ -947,18 +986,19 @@ mod tests {
                     ("lng".to_owned(), "-0.12".to_owned()),
                     ("ring".to_owned(), "3".to_owned()),
                 ],
+                headers: Vec::new(),
                 body: Vec::new(),
             },
         );
         assert_eq!(json(&list)["drops"].as_array().unwrap().len(), 1);
 
-        let opened = route(
+        let opened = handle(
             &dir,
             &request("POST", &format!("/api/drops/{id}/open"), json!({})),
         );
         assert_eq!(json(&opened)["text"].as_str().unwrap(), "hello");
 
-        let verified = route(
+        let verified = handle(
             &dir,
             &request("GET", &format!("/api/log/{id}/verify"), json!({})),
         );
@@ -974,7 +1014,7 @@ mod tests {
     fn classical_drops_also_work() {
         let dir = temp_dir("classical");
         seed_identity(&dir);
-        let created = route(
+        let created = handle(
             &dir,
             &request(
                 "POST",
@@ -984,7 +1024,7 @@ mod tests {
         );
         assert_eq!(created.status, 201);
         let id = json(&created)["id"].as_str().unwrap().to_owned();
-        let opened = route(
+        let opened = handle(
             &dir,
             &request("POST", &format!("/api/drops/{id}/open"), json!({})),
         );
@@ -996,9 +1036,9 @@ mod tests {
     fn identity_and_contacts_endpoints() {
         let dir = temp_dir("id");
         seed_identity(&dir);
-        let id = json(&route(&dir, &request("GET", "/api/id", json!({}))));
+        let id = json(&handle(&dir, &request("GET", "/api/id", json!({}))));
         assert_eq!(id["signing"].as_str().unwrap().len(), 64);
-        let contacts = json(&route(&dir, &request("GET", "/api/contacts", json!({}))));
+        let contacts = json(&handle(&dir, &request("GET", "/api/contacts", json!({}))));
         assert_eq!(contacts["contacts"].as_array().unwrap().len(), 1);
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1007,7 +1047,7 @@ mod tests {
     fn create_without_recipients_is_rejected() {
         let dir = temp_dir("noreci");
         seed_identity(&dir);
-        let response = route(
+        let response = handle(
             &dir,
             &request(
                 "POST",
@@ -1016,6 +1056,43 @@ mod tests {
             ),
         );
         assert_eq!(response.status, 400);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn token_auth_is_enforced() {
+        let dir = temp_dir("auth");
+        seed_identity(&dir);
+
+        let authed = {
+            let mut request = request("GET", "/api/id", json!({}));
+            request
+                .headers
+                .push(("authorization".to_owned(), "Bearer secret".to_owned()));
+            request
+        };
+        assert_eq!(route(&dir, &authed, Some("secret")).status, 200);
+
+        // Missing or wrong token is rejected.
+        assert_eq!(
+            route(&dir, &request("GET", "/api/id", json!({})), Some("secret")).status,
+            401
+        );
+        let wrong = {
+            let mut request = request("GET", "/api/id", json!({}));
+            request
+                .headers
+                .push(("authorization".to_owned(), "Bearer nope".to_owned()));
+            request
+        };
+        assert_eq!(route(&dir, &wrong, Some("secret")).status, 401);
+
+        // With no configured token, requests are allowed.
+        assert_eq!(
+            handle(&dir, &request("GET", "/api/id", json!({}))).status,
+            200
+        );
+
         let _ = fs::remove_dir_all(&dir);
     }
 }

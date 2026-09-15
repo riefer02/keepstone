@@ -41,6 +41,16 @@ The daemon is a thin client to the local node's data directory. It holds only
 the local identity's keys and is dependency-light (a small hand-written HTTP/1.1
 server; see ADR-0012).
 
+If you expose the daemon beyond localhost, set a bearer token:
+
+```bash
+keepstone-daemon --data-dir ./node --listen 0.0.0.0:8787 --token "$(openssl rand -hex 16)"
+# then open http://<host>:8787/?token=<the-token>
+```
+
+All `/api/*` routes require `Authorization: Bearer <token>` when a token is
+configured; the UI reads it from the `?token=` query parameter.
+
 ## libp2p transport (QUIC + TCP, Noise)
 
 ```bash

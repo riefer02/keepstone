@@ -71,7 +71,11 @@
   </div>
 
 <script>
+const TOKEN = new URLSearchParams(location.search).get('token');
+
 async function api(path, options) {
+  options = options || {};
+  options.headers = Object.assign({}, options.headers, TOKEN ? { authorization: 'Bearer ' + TOKEN } : {});
   const response = await fetch(path, options);
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'request failed');
