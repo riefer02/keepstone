@@ -128,6 +128,16 @@ enum Command {
     },
     /// Verify the local anchor chain.
     LogAnchors,
+    /// Anchor the tree head with OpenTimestamps (requires the `ots` client).
+    LogAnchorOts {
+        /// Drop id (hex).
+        id: String,
+    },
+    /// Verify an `.ots` proof with the OpenTimestamps client.
+    LogOtsVerify {
+        /// Path to a `.ots` proof file.
+        file: PathBuf,
+    },
     /// Serve local drops to peers over TCP (reference M2 transport).
     Serve {
         /// Address to listen on.
@@ -295,6 +305,8 @@ async fn main() -> Result<()> {
         Command::Verify { file } => verify_file(&file),
         Command::LogAnchor { id } => log_anchor(&cli.data_dir, &id),
         Command::LogAnchors => log_anchors(&cli.data_dir),
+        Command::LogAnchorOts { id } => log_anchor_ots(&cli.data_dir, &id),
+        Command::LogOtsVerify { file } => log_ots_verify(&file),
         Command::Serve { listen } => serve(&cli.data_dir, &listen).await,
         Command::Fetch { peer, id } => fetch(&cli.data_dir, &peer, &id).await,
         Command::Push { peer, id } => push(&cli.data_dir, &peer, &id).await,
@@ -725,6 +737,77 @@ async fn fetch(dir: &Path, peer: &str, id_text: &str) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
+// OpenTimestamps anchoring (requires the reference `ots` client)
+// ---------------------------------------------------------------------------
+
+fn ots_dir(dir: &Path) -> PathBuf {
+    dir.join("anchors")
+}
+
+fn write_ots_digest(dir: &Path, root: &[u8; 32]) -> Result<PathBuf> {
+    fs::create_dir_all(ots_dir(dir)).ok();
+    let path = ots_dir(dir).join(format!("{}.digest", hex::encode(root)));
+    fs::write(&path, root).context("writing OTS digest")?;
+    Ok(path)
+}
+
+fn ots_available() -> bool {
+    std::process::Command::new("ots")
+        .arg("--help")
+        .output()
+        .is_ok()
+}
+
+fn log_anchor_ots(dir: &Path, id_text: &str) -> Result<()> {
+    let id = DropId::from_hex(id_text)?;
+    // Ensure the drop exists, then anchor the current tree head's Merkle root.
+    store(dir)?
+        .read_drop(&id)
+        .with_context(|| format!("no such drop: {id_text}"))?;
+    let sth = store(dir)?.signed_tree_head()?;
+    let digest_path = write_ots_digest(dir, &sth.root)?;
+    println!("digest:     {}", digest_path.display());
+    println!("tree size:  {}", sth.tree_size);
+
+    if !ots_available() {
+        bail!(
+            "the OpenTimestamps client `ots` was not found on PATH.\n\
+             Install it (`pip install opentimestamps-client`), then run:\n  \
+             ots stamp {}",
+            digest_path.display()
+        );
+    }
+    let status = std::process::Command::new("ots")
+        .arg("stamp")
+        .arg(&digest_path)
+        .status()
+        .context("running `ots stamp`")?;
+    if !status.success() {
+        bail!("`ots stamp` failed");
+    }
+    println!(
+        "stamped:    {} (upgrade later with `ots upgrade`)",
+        digest_path.with_extension("digest.ots").display()
+    );
+    Ok(())
+}
+
+fn log_ots_verify(file: &Path) -> Result<()> {
+    if !ots_available() {
+        bail!("the OpenTimestamps client `ots` was not found on PATH");
+    }
+    let status = std::process::Command::new("ots")
+        .arg("verify")
+        .arg(file)
+        .status()
+        .context("running `ots verify`")?;
+    if !status.success() {
+        bail!("`ots verify` failed");
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Standalone verifier
 // ---------------------------------------------------------------------------
 
@@ -1120,4 +1203,26 @@ async fn p2p_fetch(dir: &Path, peer: &str, id_text: &str) -> Result<()> {
     append_log_entry(dir, &raw).ok();
     println!("fetched {id} ({received} chunks) via libp2p from {peer}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ots_digest_is_written_verbatim() {
+        let dir = std::env::temp_dir().join(format!("keepstone-ots-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let root = [7u8; 32];
+        let path = write_ots_digest(&dir, &root).unwrap();
+        let written = fs::read(&path).unwrap();
+        assert_eq!(written, root);
+        assert!(path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .ends_with(".digest"));
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

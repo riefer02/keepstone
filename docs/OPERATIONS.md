@@ -70,6 +70,17 @@ keepstone --data-dir ./node log-anchor <id>   # commit the tree head to the chai
 keepstone --data-dir ./node log-anchors       # verify chain continuity
 ```
 
+### External Bitcoin timestamps (OpenTimestamps)
+
+```bash
+# Requires the `ots` client (pip install opentimestamps-client).
+keepstone --data-dir ./node log-anchor-ots <id>   # writes a digest and stamps it
+keepstone log-ots-verify ./anchors/<root>.digest.ots
+```
+
+The digest file is written even if `ots` is absent; the command then explains
+how to stamp it. Bitcoin verification happens through the `ots` client.
+
 ## Security posture
 
 - No hosted service is required. Relays and log nodes are self-hostable and

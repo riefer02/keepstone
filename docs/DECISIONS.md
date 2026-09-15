@@ -196,3 +196,22 @@ instead of the one that identifies the node. This is k-anonymity, **not**
 cryptographic PIR: it raises the cost of linkage without eliminating it, and it
 costs `ring`-many lookups. Proper PIR remains future work; the interface is
 shaped so it can be swapped in.
+
+## ADR-0015 — OpenTimestamps via the reference `ots` client
+
+**Context.** D6 chose OpenTimestamps for external anchoring. We evaluated the
+Rust ecosystem: `opentimestamps` 0.2.0 can parse/serialize/verify `.ots` files
+but does **not** submit to calendar servers, and Bitcoin verification needs
+block headers. Implementing the calendar wire protocol ourselves risks a subtly
+wrong reimplementation we cannot validate against the live service here.
+
+**Decision.** Keep the dependency-free `HashChainAnchor` as the default, and add
+`log-anchor-ots` / `log-ots-verify`, which produce a digest file for the current
+tree-head root and delegate stamping/verification to the reference `ots` client
+if it is installed. If it is absent, the command prints install instructions and
+exits non-zero (the digest file is still written).
+
+**Consequences.** Genuine, third-party-verifiable Bitcoin timestamps with no
+fragile reimplementation and no new dependencies. It requires the external `ots`
+client; a native Rust calendar client remains future work behind the same
+`Anchor` trait.
