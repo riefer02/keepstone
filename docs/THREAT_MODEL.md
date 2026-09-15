@@ -26,6 +26,9 @@
 ## Explicit non-guarantees
 
 - **Metadata** (who is near which cell; subscription/fetch patterns).
+  Partially mitigated by k-anonymous cell lookups (`find_providers_private`):
+  a query for a cell is hidden among its neighbours. This raises the cost of
+  linkage but is **not** cryptographic PIR.
 - **Endpoint compromise.**
 - **Availability** (no durability guarantee yet; M5 federation will address it).
 - **Proof of physical location** (place-locked mode is best-effort, from M3).

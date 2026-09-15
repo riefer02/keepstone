@@ -179,3 +179,20 @@ in exactly one place. Path helpers stay where they are cheap.
 and easier future clients (desktop, mobile). The daemon shrank substantially.
 The store is synchronous; async callers just call it directly (operations are
 short and local).
+
+## ADR-0014 — k-anonymous cell lookups (query privacy)
+
+**Context.** The sparse-cell path queries the Kademlia DHT with the literal H3
+cell, so a network observer learns which cell a node is interested in — a
+location leak that undercuts the metadata story.
+
+**Decision.** Add `find_providers_private`: it issues provider lookups for the
+target cell **and its `ring` neighbours** concurrently, shuffled, and returns
+only the target's providers. `nearby_cells` exposes the ring. The CLI surfaces
+this as `find-providers --ring`.
+
+**Consequences.** A passive observer sees a set of plausible nearby-cell queries
+instead of the one that identifies the node. This is k-anonymity, **not**
+cryptographic PIR: it raises the cost of linkage without eliminating it, and it
+costs `ring`-many lookups. Proper PIR remains future work; the interface is
+shaped so it can be swapped in.

@@ -177,6 +177,16 @@ enum Command {
         #[command(subcommand)]
         cmd: HuntCmd,
     },
+    /// Find peers serving a cell via the DHT (k-anonymous lookup).
+    FindProviders {
+        /// Peer multiaddr, e.g. `/ip4/127.0.0.1/tcp/7778`.
+        peer: String,
+        /// H3 cell (hex).
+        cell: String,
+        /// Anonymity ring: also query this many neighbours.
+        #[arg(long, default_value_t = 2)]
+        ring: u32,
+    },
 }
 
 /// Subcommands for organizing a hunt.
@@ -291,6 +301,7 @@ async fn main() -> Result<()> {
         Command::SthServe { listen } => sth_serve(&cli.data_dir, &listen).await,
         Command::SthFetch { peer } => sth_fetch(&peer).await,
         Command::Hunt { cmd } => hunt(&cli.data_dir, cmd),
+        Command::FindProviders { peer, cell, ring } => find_providers_cmd(&peer, &cell, ring).await,
         Command::P2pServe { listen } => p2p_serve(&cli.data_dir, &listen).await,
         Command::P2pFetch { peer, id } => p2p_fetch(&cli.data_dir, &peer, &id).await,
     }
@@ -1063,6 +1074,18 @@ async fn p2p_serve(dir: &Path, listen: &str) -> Result<()> {
     let store = Arc::new(Mutex::new(load_store(dir)?));
     println!("libp2p serving on {listen} (QUIC + TCP, ciphertext only)");
     keepstone_p2p::serve(addr, store).await?;
+    Ok(())
+}
+
+async fn find_providers_cmd(peer: &str, cell: &str, ring: u32) -> Result<()> {
+    let addr = parse_multiaddr(peer)?;
+    let providers = keepstone_p2p::find_providers_private(addr, cell, ring).await?;
+    if providers.is_empty() {
+        println!("(no providers for {cell})");
+    }
+    for provider in providers {
+        println!("{provider}");
+    }
     Ok(())
 }
 

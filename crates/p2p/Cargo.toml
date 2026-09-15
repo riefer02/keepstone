@@ -16,6 +16,7 @@ keepstone-crypto.workspace = true
 keepstone-node.workspace = true
 thiserror.workspace = true
 futures = "0.3"
+rand.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "io-util", "sync"] }
 libp2p = { version = "0.57", features = [
     "tokio",

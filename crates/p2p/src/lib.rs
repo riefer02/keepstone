@@ -27,9 +27,10 @@ use libp2p::{
 use thiserror::Error;
 
 use keepstone_core::presence::{PresenceAttestation, PresenceRequest};
-use keepstone_core::{DropId, SignedDrop};
+use keepstone_core::{CellId, DropId, SignedDrop};
 use keepstone_node::protocol::{Message, MAX_FRAME};
 use keepstone_node::{Clock, MemoryStore, Storage, SystemClock};
+use rand::seq::SliceRandom;
 
 /// The request/response protocol identifier.
 pub const DROP_PROTOCOL: &str = "/keepstone/drop/1";
@@ -600,4 +601,54 @@ pub async fn request_presence(
         Message::Attestation(bytes) => Ok(PresenceAttestation::from_canonical(&bytes).ok()),
         _ => Ok(None),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Query privacy: k-anonymous cell lookups
+// ---------------------------------------------------------------------------
+
+/// The cells in a ring around `cell` (including the center), as hex strings.
+///
+/// # Errors
+/// Returns [`P2pError::Protocol`] if `cell` is not a valid H3 cell.
+pub fn nearby_cells(cell: &str, ring: u32) -> Result<Vec<String>, P2pError> {
+    let center = CellId::parse_hex(cell).map_err(|_| P2pError::Protocol)?;
+    Ok(center.ring(ring).iter().map(CellId::to_hex).collect())
+}
+
+/// Find providers for `cell` while hiding which cell you actually want.
+///
+/// Issues provider lookups for the target cell **and its `ring` neighbours** in
+/// a shuffled order, so a network observer sees a set of plausible cell queries
+/// instead of the single query that identifies your location. This is
+/// k-anonymity, not cryptographic PIR: it raises the cost of linkage without
+/// eliminating it, and it costs `ring`-many lookups.
+///
+/// # Errors
+/// Returns [`P2pError`] if `cell` is invalid.
+pub async fn find_providers_private(
+    peer: Multiaddr,
+    cell: &str,
+    ring: u32,
+) -> Result<Vec<libp2p::PeerId>, P2pError> {
+    let mut cells = nearby_cells(cell, ring)?;
+    cells.shuffle(&mut rand::thread_rng());
+
+    // Fire all lookups concurrently and return as soon as the target answers;
+    // the decoy queries are still sent, but we do not wait for their timeouts.
+    let mut pending = futures::stream::FuturesUnordered::new();
+    for candidate in cells {
+        let peer = peer.clone();
+        let is_target = candidate == cell;
+        pending.push(async move {
+            let providers = find_providers(peer, &candidate).await.unwrap_or_default();
+            (is_target, providers)
+        });
+    }
+    while let Some((is_target, providers)) = pending.next().await {
+        if is_target {
+            return Ok(providers);
+        }
+    }
+    Ok(Vec::new())
 }
