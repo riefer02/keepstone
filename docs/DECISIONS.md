@@ -135,3 +135,32 @@ once a suitable crate exists.
 **Consequences.** Real, testable, offline anchoring today with no new
 dependencies. It provides tamper-evidence but not a third-party timestamp until
 an external backend is added; the trait boundary keeps that a drop-in change.
+
+## ADR-0011 — Namespaced file layout over the wire (drop envelope v2)
+
+**Context.** The envelope needed to carry either an Ed25519 signature or a
+hybrid Ed25519 + ML-DSA-65 signature.
+
+**Decision.** `Envelope = [suite, sig_kind, signer, ml_dsa_key, payload, signature]`.
+`sig_kind` 1 has an empty `ml_dsa_key` and a 64-byte signature; kind 2 carries a
+1952-byte verifying key and a `64 || 3309` signature. Verification dispatches on
+`sig_kind` and, for hybrid, requires both halves.
+
+**Consequences.** Post-quantum drops are self-verifying (the verifying key
+travels with the drop). Envelopes grew from `array(4)` to `array(6)`; this is a
+pre-release wire break.
+
+## ADR-0012 — Hand-written HTTP daemon instead of a web framework
+
+**Context.** The plan calls for a browser client as a thin client to a local
+node. A framework (axum/hyper) would add a large dependency tree for a handful
+of JSON routes on localhost.
+
+**Decision.** Implement a minimal HTTP/1.1 server (Content-Length bodies,
+`Connection: close`) in `keepstone-daemon`, serving an embedded single-page UI.
+The daemon reuses the same crates and data-directory format as the CLI.
+
+**Consequences.** No new heavy dependencies and full control of the surface. It
+is not a general-purpose HTTP server (no keep-alive, chunked encoding, or TLS);
+it is intended for `127.0.0.1` only. The daemon duplicates a little data-dir
+logic from the CLI; extracting a shared `keepstone-store` crate is a follow-up.

@@ -8,6 +8,7 @@ members = [
     "crates/relay",
     "crates/p2p",
     "crates/cli",
+    "crates/daemon",
     "xtask",
 ]
 

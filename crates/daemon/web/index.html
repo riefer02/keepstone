@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Keepstone</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font: 15px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+         background:#0e1116; color:#d7dde5; margin:0; padding:24px; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  .sub { color:#8b95a1; margin-bottom:20px; }
+  .grid { display:grid; grid-template-columns: 1fr 1fr; gap:20px; max-width:1100px; }
+  .card { background:#161b22; border:1px solid #232a34; border-radius:10px; padding:16px; }
+  .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:#8b95a1; margin:0 0 12px; }
+  input, select, textarea, button { font:inherit; width:100%; box-sizing:border-box;
+    background:#0e1116; color:#d7dde5; border:1px solid #2b333f; border-radius:6px; padding:8px; }
+  button { background:#1f6feb; border-color:#1f6feb; cursor:pointer; color:#fff; margin-top:8px; }
+  button.ghost { background:transparent; color:#9fb0c3; border-color:#2b333f; }
+  label { display:block; font-size:12px; color:#8b95a1; margin:10px 0 4px; }
+  .row { display:flex; gap:10px; }
+  .drop { border:1px solid #232a34; border-radius:8px; padding:10px; margin-bottom:8px; }
+  .drop .id { color:#58a6ff; word-break:break-all; font-size:12px; }
+  .drop .meta { color:#8b95a1; font-size:12px; }
+  pre { white-space:pre-wrap; word-break:break-word; background:#0e1116; border:1px solid #232a34;
+        border-radius:6px; padding:10px; min-height:40px; }
+  .ok { color:#3fb950; } .bad { color:#f85149; }
+  .kv { font-size:12px; color:#8b95a1; word-break:break-all; }
+</style>
+</head>
+<body>
+  <h1>Keepstone</h1>
+  <div class="sub">Encrypted geospatial dead drops — local node <span id="listen"></span></div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Create a drop</h2>
+      <label>Recipient(s) — comma separated contact names</label>
+      <input id="to" placeholder="bob, carol">
+      <div class="row">
+        <div style="flex:1"><label>Latitude</label><input id="lat" value="51.5007"></div>
+        <div style="flex:1"><label>Longitude</label><input id="lng" value="-0.1246"></div>
+      </div>
+      <label>Suite</label>
+      <select id="suite">
+        <option value="classical">classical (Ed25519 / X25519)</option>
+        <option value="hybrid">hybrid post-quantum (ML-KEM-768 + ML-DSA-65)</option>
+      </select>
+      <label>Message</label>
+      <textarea id="message" rows="3" placeholder="meet at the old oak at dusk"></textarea>
+      <button onclick="createDrop()">Create drop</button>
+      <pre id="createResult"></pre>
+    </div>
+
+    <div class="card">
+      <h2>Nearby drops</h2>
+      <div class="row">
+        <div style="flex:1"><label>Latitude</label><input id="flat" value="51.5007"></div>
+        <div style="flex:1"><label>Longitude</label><input id="flng" value="-0.1246"></div>
+      </div>
+      <button class="ghost" onclick="loadDrops()">Refresh</button>
+      <div id="drops" style="margin-top:12px"></div>
+      <h2 style="margin-top:16px">Opened payload</h2>
+      <pre id="openResult">Select a drop to open.</pre>
+    </div>
+  </div>
+
+  <div class="card" style="max-width:1100px; margin-top:20px">
+    <h2>This node</h2>
+    <div class="kv" id="identity">loading…</div>
+  </div>
+
+<script>
+async function api(path, options) {
+  const response = await fetch(path, options);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'request failed');
+  return data;
+}
+
+async function loadIdentity() {
+  try {
+    const id = await api('/api/id');
+    document.getElementById('identity').innerHTML =
+      `signing: ${id.signing}<br>ecdh: ${id.ecdh}<br>hybrid: ${id.hybrid}`;
+  } catch (e) { document.getElementById('identity').textContent = e.message; }
+}
+
+async function createDrop() {
+  const out = document.getElementById('createResult');
+  out.textContent = 'working…';
+  try {
+    const to = document.getElementById('to').value.split(',').map(s => s.trim()).filter(Boolean);
+    const body = {
+      to,
+      lat: parseFloat(document.getElementById('lat').value),
+      lng: parseFloat(document.getElementById('lng').value),
+      suite: document.getElementById('suite').value,
+      message: document.getElementById('message').value,
+    };
+    const result = await api('/api/drops', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    });
+    out.innerHTML = `<span class="ok">created</span>\n${result.id}`;
+    loadDrops();
+  } catch (e) { out.innerHTML = `<span class="bad">${e.message}</span>`; }
+}
+
+async function loadDrops() {
+  const container = document.getElementById('drops');
+  container.textContent = 'loading…';
+  try {
+    const lat = document.getElementById('flat').value;
+    const lng = document.getElementById('flng').value;
+    const data = await api(`/api/drops?lat=${lat}&lng=${lng}&ring=3`);
+    if (!data.drops.length) { container.textContent = '(none nearby)'; return; }
+    container.innerHTML = data.drops.map(d => `
+      <div class="drop">
+        <div class="id">${d.id}</div>
+        <div class="meta">cell ${d.cell} · ${d.chunks} chunk(s) · suite ${d.suite} · sig ${d.sig_kind}</div>
+        <button class="ghost" style="width:auto;padding:4px 10px" onclick="openDrop('${d.id}')">Open</button>
+        <button class="ghost" style="width:auto;padding:4px 10px" onclick="verifyDrop('${d.id}')">Verify</button>
+      </div>`).join('');
+  } catch (e) { container.innerHTML = `<span class="bad">${e.message}</span>`; }
+}
+
+async function openDrop(id) {
+  const out = document.getElementById('openResult');
+  out.textContent = 'opening…';
+  try {
+    const result = await api(`/api/drops/${id}/open`, { method: 'POST' });
+    out.textContent = result.text !== undefined ? result.text : '(binary) ' + result.hex;
+  } catch (e) { out.innerHTML = `<span class="bad">${e.message}</span>`; }
+}
+
+async function verifyDrop(id) {
+  const out = document.getElementById('openResult');
+  try {
+    const v = await api(`/api/log/${id}/verify`);
+    const cls = (x) => x ? 'ok' : 'bad';
+    out.innerHTML =
+      `signature <span class="${cls(v.signature)}">${v.signature}</span>\n` +
+      `inclusion <span class="${cls(v.inclusion)}">${v.inclusion}</span>\n` +
+      `sth       <span class="${cls(v.sth)}">${v.sth}</span>\n` +
+      `tree size ${v.tree_size}\nroot ${v.root}`;
+  } catch (e) { out.innerHTML = `<span class="bad">${e.message}</span>`; }
+}
+
+loadIdentity();
+loadDrops();
+</script>
+</body>
+</html>

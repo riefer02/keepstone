@@ -1929,6 +1929,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "keepstone-daemon"
+version = "0.0.1"
+dependencies = [
+ "hex",
+ "keepstone-core",
+ "keepstone-crypto",
+ "keepstone-log",
+ "keepstone-node",
+ "rand 0.8.8",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "keepstone-log"
 version = "0.0.1"
 dependencies = [

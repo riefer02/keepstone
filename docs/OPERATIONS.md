@@ -29,6 +29,18 @@ keepstone --data-dir ./client fetch 127.0.0.1:7777 <id>
 keepstone --data-dir ./client drop-open <id>
 ```
 
+## Client daemon (browser UI)
+
+```bash
+cargo build -p keepstone-daemon
+./target/debug/keepstone-daemon --data-dir ./node --listen 127.0.0.1:8787
+# open http://127.0.0.1:8787
+```
+
+The daemon is a thin client to the local node's data directory. It holds only
+the local identity's keys and is dependency-light (a small hand-written HTTP/1.1
+server; see ADR-0012).
+
 ## libp2p transport (QUIC + TCP, Noise)
 
 ```bash

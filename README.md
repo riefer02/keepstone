@@ -27,6 +27,21 @@ delivery of drops from unknown authors**, **Kademlia cell-provider discovery**,
 encapsulation and signatures**, Shamir sharing, the place-locked end-to-end
 flow, and property-based invariants.
 
+## Client
+
+A local daemon exposes a JSON API and serves a browser UI. The daemon holds only
+the local device's keys and never exposes plaintext without them.
+
+```bash
+cargo build -p keepstone-daemon
+./target/debug/keepstone-daemon --data-dir ./demo/alice --listen 127.0.0.1:8787
+# then open http://127.0.0.1:8787
+```
+
+The UI lists nearby drops, creates drops (classical or **post-quantum**), opens
+them, and verifies log inclusion. API: `GET /api/id`, `GET|POST /api/contacts`,
+`GET|POST /api/drops`, `POST /api/drops/{id}/open`, `GET /api/log/{id}/verify`.
+
 ## The two locks
 
 | Lock | Mechanism | Strength | Protects |
