@@ -18,12 +18,12 @@ the confidentiality guarantee.**
 - **M4 (verifiability & hardening):** property-based tests; **fuzzing** (`cargo-fuzz` harnesses for drop, protocol, and presence decoders — ~30M executions, no crashes); **external anchoring** of signed tree heads behind an `Anchor` trait (`log-anchor` / `log-anchors`); **criterion benchmarks** (`docs/BENCHMARKS.md`).
 - **M5 (in progress):** post-quantum **hybrid key encapsulation** *and* **hybrid signatures** (X25519 + ML-KEM-768; Ed25519 + ML-DSA-65), **wired end-to-end** into drops (`drop-create --suite hybrid`); **multi-recipient and multi-device** drops; federation remains.
 
-The test suite currently passes **98 tests** covering AEAD, sealed boxes,
+The test suite currently passes **99 tests** covering AEAD, sealed boxes,
 chunked streaming encryption, canonical CBOR, signing/verification, H3
 addressing, Merkle inclusion + consistency proofs, the peer protocol,
 two-node TCP exchange, **two-node libp2p (QUIC + TCP) exchange**, **gossipsub
 delivery of drops from unknown authors**, **Kademlia cell-provider discovery**,
-**networked presence-certificate collection**, **hybrid post-quantum
+**networked presence-certificate collection** (reference TCP *and* **libp2p**), **hybrid post-quantum
 encapsulation and signatures**, Shamir sharing, the place-locked end-to-end
 flow, and property-based invariants.
 

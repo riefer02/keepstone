@@ -26,9 +26,10 @@ use libp2p::{
 };
 use thiserror::Error;
 
+use keepstone_core::presence::{PresenceAttestation, PresenceRequest};
 use keepstone_core::{DropId, SignedDrop};
 use keepstone_node::protocol::{Message, MAX_FRAME};
-use keepstone_node::{MemoryStore, Storage};
+use keepstone_node::{Clock, MemoryStore, Storage, SystemClock};
 
 /// The request/response protocol identifier.
 pub const DROP_PROTOCOL: &str = "/keepstone/drop/1";
@@ -529,4 +530,74 @@ pub async fn gossip_publish(peer: Multiaddr, cell: &str, payload: Vec<u8>) -> Re
         .map_err(|e| P2pError::Transport(format!("publish: {e:?}")))?;
     settle(&mut swarm, Duration::from_millis(750)).await;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Witness presence over libp2p (M3b)
+// ---------------------------------------------------------------------------
+
+/// Serve presence attestations for a cell over libp2p.
+///
+/// # Errors
+/// Returns [`P2pError`] if the listener cannot be started.
+pub async fn serve_witness_cell(
+    listen: Multiaddr,
+    witness: Arc<keepstone_crypto::Identity>,
+    cell: String,
+    ready: Option<tokio::sync::oneshot::Sender<Multiaddr>>,
+) -> Result<(), P2pError> {
+    let mut swarm = build_swarm()?;
+    swarm
+        .listen_on(listen)
+        .map_err(|e| P2pError::Transport(e.to_string()))?;
+
+    let mut ready = ready;
+    loop {
+        match swarm.select_next_some().await {
+            SwarmEvent::NewListenAddr { address, .. } => {
+                if let Some(sender) = ready.take() {
+                    let _ = sender.send(address);
+                }
+            }
+            SwarmEvent::Behaviour(BehaviourEvent::Drop(request_response::Event::Message {
+                message:
+                    rr::Message::Request {
+                        request, channel, ..
+                    },
+                ..
+            })) => {
+                let response = match request {
+                    Message::Presence(bytes) => match PresenceRequest::from_canonical(&bytes) {
+                        Ok(presence) if presence.cell == cell => Message::Attestation(
+                            PresenceAttestation::sign(
+                                witness.as_ref(),
+                                &presence,
+                                0,
+                                SystemClock.now_unix(),
+                            )
+                            .to_canonical(),
+                        ),
+                        _ => Message::Bye,
+                    },
+                    other => other,
+                };
+                let _ = swarm.behaviour_mut().drop.send_response(channel, response);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Request a presence attestation from a witness over libp2p.
+///
+/// # Errors
+/// Returns [`P2pError`] on transport failure.
+pub async fn request_presence(
+    addr: Multiaddr,
+    presence: &PresenceRequest,
+) -> Result<Option<PresenceAttestation>, P2pError> {
+    match request(addr, Message::Presence(presence.to_canonical())).await? {
+        Message::Attestation(bytes) => Ok(PresenceAttestation::from_canonical(&bytes).ok()),
+        _ => Ok(None),
+    }
 }
