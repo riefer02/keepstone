@@ -9,7 +9,7 @@ updated as milestones land.
 | Recipients are not named in cleartext | Recipient tags + decoy padding (`MIN_TAGS`); no recipient keys in the body | ✅ M2 |
 | No server can read it | relay + TCP serve hold **ciphertext only**; no key material in the node API | ✅ M2 |
 | The author cannot be impersonated | Ed25519 signature over the canonical payload; tamper tests fail verification | ✅ M1 |
-| Anyone can verify a drop existed | RFC 6962 inclusion proof + signed tree head; `log verify` CLI | ✅ M1 |
+| Anyone can verify a drop existed | RFC 6962 inclusion proof + signed tree head; `log verify` CLI; `keepstone verify <file>` checks a drop with no data dir or network | ✅ M1 |
 | History cannot be silently rewritten | Consistency proofs between tree sizes; **equivocation detection**; **external anchoring** of signed tree heads via an append-only hash chain | ✅ M4 |
 | Content cannot be truncated or reordered | Chunk count + index bound in the AEAD AAD | ✅ M1 |
 | Flooding costs work | Hashcash-style proof-of-work bound to signer + content | ✅ M2 |

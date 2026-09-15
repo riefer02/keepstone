@@ -124,6 +124,11 @@ enum Command {
         /// Drop id (hex).
         id: String,
     },
+    /// Verify a standalone `.signed` drop file (no data directory needed).
+    Verify {
+        /// Path to a `.signed` drop file.
+        file: PathBuf,
+    },
     /// Anchor the current tree head for a drop into the local anchor chain.
     LogAnchor {
         /// Drop id (hex).
@@ -218,6 +223,7 @@ async fn main() -> Result<()> {
         Command::DropOpen { id, out } => drop_open(&cli.data_dir, &id, out.as_deref()),
         Command::DropList { lat, lng, ring } => drop_list(&cli.data_dir, lat, lng, ring),
         Command::LogVerify { id } => log_verify(&cli.data_dir, &id),
+        Command::Verify { file } => verify_file(&file),
         Command::LogAnchor { id } => log_anchor(&cli.data_dir, &id),
         Command::LogAnchors => log_anchors(&cli.data_dir),
         Command::Serve { listen } => serve(&cli.data_dir, &listen).await,
@@ -1050,6 +1056,41 @@ async fn fetch(dir: &Path, peer: &str, id_text: &str) -> Result<()> {
     append_log_entry(dir, &raw).ok();
 
     println!("fetched {id} ({received} chunks) from {peer}");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Standalone verifier
+// ---------------------------------------------------------------------------
+
+fn verify_file(file: &Path) -> Result<()> {
+    let raw = fs::read(file).with_context(|| format!("reading {}", file.display()))?;
+    let signed = SignedDrop::decode(&raw).context("malformed drop envelope")?;
+    signed.verify().context("signature invalid")?;
+    let body = signed.body().context("malformed drop body")?;
+
+    let kind = if signed.sig_kind == keepstone_core::SIG_HYBRID {
+        "hybrid (Ed25519 + ML-DSA-65)"
+    } else {
+        "Ed25519"
+    };
+    println!("id:         {}", signed.id());
+    println!("signature:  ok ({kind})");
+    println!("suite:      {}", body.suite);
+    println!(
+        "pow:        {}",
+        if body.pow_ok(&signed.signer) {
+            "ok"
+        } else {
+            "FAILED"
+        }
+    );
+    println!("cell:       {}", body.cell);
+    println!("ring:       {}", body.ring);
+    println!("created:    {}", body.created_at);
+    println!("expiry:     {}", body.expiry);
+    println!("chunks:     {}", body.chunk_count);
+    println!("content:    {}", hex::encode(body.content_root));
     Ok(())
 }
 

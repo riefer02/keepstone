@@ -112,6 +112,13 @@ keepstone --data-dir ./demo/bob drop-open <id>
 keepstone --data-dir ./demo/bob log-verify <id>
 ```
 
+### Standalone verification
+
+```bash
+# Verify a drop file with no data directory or network:
+keepstone verify ./path/to/<id>.signed
+```
+
 ### Federated store-and-forward (author can be offline)
 
 ```bash
