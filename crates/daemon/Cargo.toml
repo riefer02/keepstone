@@ -19,6 +19,7 @@ keepstone-core.workspace = true
 keepstone-crypto.workspace = true
 keepstone-log.workspace = true
 keepstone-node.workspace = true
+keepstone-store.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time"] }
 serde_json = "1"
 rand.workspace = true

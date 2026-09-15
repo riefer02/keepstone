@@ -7,6 +7,7 @@ members = [
     "crates/node",
     "crates/relay",
     "crates/p2p",
+    "crates/store",
     "crates/cli",
     "crates/daemon",
     "xtask",
@@ -27,6 +28,7 @@ keepstone-log = { path = "crates/log", version = "0.0.1" }
 keepstone-node = { path = "crates/node", version = "0.0.1" }
 keepstone-relay = { path = "crates/relay", version = "0.0.1" }
 keepstone-p2p = { path = "crates/p2p", version = "0.0.1" }
+keepstone-store = { path = "crates/store", version = "0.0.1" }
 
 thiserror = "1"
 sha2 = "0.10"

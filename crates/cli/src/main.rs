@@ -18,19 +18,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
-use keepstone_core::{
-    content_root, sha256, CellId, DropBody, DropId, Mode, SealedContentKey, SignedDrop, WrappedKey,
-    MIN_TAGS, PROTOCOL_VERSION,
-};
-use keepstone_crypto::kdf::derive_tag;
-use keepstone_crypto::{
-    stream, CryptoSuite, HybridKeypair, HybridPublic, Identity, MlDsaKeypair, SealedKey,
-};
+use keepstone_core::{sha256, DropId, SignedDrop};
+use keepstone_crypto::Identity;
 use keepstone_log::{anchor, merkle, Anchor, SignedTreeHead};
 use keepstone_node::{net, Clock, MemoryStore, Storage, SystemClock};
-use rand::rngs::OsRng;
-use rand::seq::SliceRandom;
-use rand::RngCore;
+use keepstone_store::Store;
 use std::sync::{Arc, Mutex};
 
 /// Keepstone reference client.
@@ -308,27 +300,8 @@ async fn main() -> Result<()> {
 // Identity
 // ---------------------------------------------------------------------------
 
-fn identity_path(dir: &Path) -> PathBuf {
-    dir.join("identity.txt")
-}
-
-fn save_identity(dir: &Path, identity: &Identity) -> Result<()> {
-    let contents = format!(
-        "{}\n{}\n",
-        hex::encode(identity.signing_secret_bytes()),
-        hex::encode(identity.ecdh_secret_bytes())
-    );
-    fs::write(identity_path(dir), contents).context("writing identity")?;
-    Ok(())
-}
-
-fn load_identity(dir: &Path) -> Result<Identity> {
-    let text = fs::read_to_string(identity_path(dir))
-        .context("no identity found; run `keepstone keygen` first")?;
-    let mut lines = text.lines();
-    let signing = hex32(lines.next().ok_or_else(|| anyhow!("missing signing key"))?)?;
-    let ecdh = hex32(lines.next().ok_or_else(|| anyhow!("missing ecdh key"))?)?;
-    Ok(Identity::from_secret_bytes(&signing, &ecdh))
+fn store(dir: &Path) -> Result<Store> {
+    Ok(Store::open(dir)?)
 }
 
 fn hex32(text: &str) -> Result<[u8; 32]> {
@@ -337,120 +310,29 @@ fn hex32(text: &str) -> Result<[u8; 32]> {
 }
 
 fn keygen(dir: &Path) -> Result<()> {
-    if identity_path(dir).exists() {
-        bail!(
-            "identity already exists at {}",
-            identity_path(dir).display()
-        );
-    }
-    let identity = Identity::generate();
-    save_identity(dir, &identity)?;
-    let hybrid = HybridKeypair::generate();
-    save_hybrid(dir, &hybrid)?;
-    save_mldsa(dir, &MlDsaKeypair::generate())?;
+    let store = store(dir)?;
+    let identity = store.keygen()?;
     println!("identity created");
     println!("  signing: {}", hex::encode(identity.signing_public()));
     println!("  ecdh:    {}", hex::encode(identity.ecdh_public()));
-    println!("  hybrid:  {}", hex::encode(hybrid_public_bytes(&hybrid)));
+    println!("  hybrid:  {}", hex::encode(store.hybrid_public_bytes()?));
     Ok(())
 }
 
 fn print_id(dir: &Path) -> Result<()> {
-    let identity = load_identity(dir)?;
-    let hybrid = load_or_create_hybrid(dir)?;
+    let store = store(dir)?;
+    let identity = store.identity()?;
     println!("signing: {}", hex::encode(identity.signing_public()));
     println!("ecdh:    {}", hex::encode(identity.ecdh_public()));
-    println!("hybrid:  {}", hex::encode(hybrid_public_bytes(&hybrid)));
+    println!("hybrid:  {}", hex::encode(store.hybrid_public_bytes()?));
     Ok(())
 }
 
-fn hybrid_path(dir: &Path) -> PathBuf {
-    dir.join("hybrid.txt")
-}
-
-fn hybrid_public_bytes(keypair: &HybridKeypair) -> Vec<u8> {
-    let public: HybridPublic = keypair.public();
-    let mut out = Vec::with_capacity(public.x25519.len() + public.kem.len());
-    out.extend_from_slice(&public.x25519);
-    out.extend_from_slice(&public.kem);
-    out
-}
-
-fn save_hybrid(dir: &Path, keypair: &HybridKeypair) -> Result<()> {
-    fs::write(hybrid_path(dir), hex::encode(keypair.to_secret_bytes()))
-        .context("writing hybrid key")?;
-    Ok(())
-}
-
-fn load_hybrid(dir: &Path) -> Result<HybridKeypair> {
-    let text = fs::read_to_string(hybrid_path(dir))
-        .context("no hybrid key found; regenerate the identity")?;
-    let bytes = hex::decode(text.trim()).context("decoding hybrid key")?;
-    let arr: [u8; 96] = bytes
-        .try_into()
-        .map_err(|_| anyhow!("expected 96-byte hybrid key"))?;
-    Ok(HybridKeypair::from_secret_bytes(&arr)?)
-}
-
-fn load_or_create_hybrid(dir: &Path) -> Result<HybridKeypair> {
-    if hybrid_path(dir).exists() {
-        load_hybrid(dir)
-    } else {
-        let keypair = HybridKeypair::generate();
-        save_hybrid(dir, &keypair)?;
-        Ok(keypair)
-    }
-}
-
-fn hybrid_public_from_bytes(bytes: &[u8]) -> Result<HybridPublic> {
-    if bytes.len() != 32 + 1184 {
-        bail!("hybrid public key must be 32 + 1184 bytes");
-    }
-    let x25519: [u8; 32] = bytes[..32]
-        .try_into()
-        .map_err(|_| anyhow!("bad hybrid x25519"))?;
-    Ok(HybridPublic {
-        x25519,
-        kem: bytes[32..].to_vec(),
-    })
-}
-
-fn mldsa_path(dir: &Path) -> PathBuf {
-    dir.join("mldsa.txt")
-}
-
-fn save_mldsa(dir: &Path, keypair: &MlDsaKeypair) -> Result<()> {
-    fs::write(mldsa_path(dir), hex::encode(keypair.to_seed())).context("writing ML-DSA seed")?;
-    Ok(())
-}
-
-fn load_mldsa(dir: &Path) -> Result<MlDsaKeypair> {
-    let text = fs::read_to_string(mldsa_path(dir))
-        .context("no ML-DSA key found; regenerate the identity")?;
-    let bytes = hex::decode(text.trim()).context("decoding ML-DSA seed")?;
-    let seed: [u8; 32] = bytes
-        .try_into()
-        .map_err(|_| anyhow!("expected 32-byte ML-DSA seed"))?;
-    Ok(MlDsaKeypair::from_seed(&seed)?)
-}
-
-fn load_or_create_mldsa(dir: &Path) -> Result<MlDsaKeypair> {
-    if mldsa_path(dir).exists() {
-        load_mldsa(dir)
-    } else {
-        let keypair = MlDsaKeypair::generate();
-        save_mldsa(dir, &keypair)?;
-        Ok(keypair)
-    }
-}
+// Hybrid and ML-DSA key handling now lives in `keepstone-store`.
 
 // ---------------------------------------------------------------------------
 // Contacts
 // ---------------------------------------------------------------------------
-
-fn contacts_path(dir: &Path) -> PathBuf {
-    dir.join("contacts.txt")
-}
 
 fn contact_add(
     dir: &Path,
@@ -459,27 +341,7 @@ fn contact_add(
     ecdh: &str,
     hybrid: Option<&str>,
 ) -> Result<()> {
-    let signing = hex32(signing)?;
-    let ecdh = hex32(ecdh)?;
-    let hybrid = match hybrid {
-        Some(value) => Some(hex::decode(value).context("decoding hybrid contact key")?),
-        None => None,
-    };
-    if name.contains(char::is_whitespace) {
-        bail!("contact name must not contain whitespace");
-    }
-    let mut existing = fs::read_to_string(contacts_path(dir)).unwrap_or_default();
-    let device_line = format!("{name} {} {} ", hex::encode(signing), hex::encode(ecdh));
-    if existing.lines().any(|l| l.starts_with(&device_line)) {
-        bail!("contact `{name}` already has this device");
-    }
-    existing.push_str(&format!(
-        "{name} {} {} {}\n",
-        hex::encode(signing),
-        hex::encode(ecdh),
-        hybrid.map(hex::encode).unwrap_or_else(|| "-".to_owned())
-    ));
-    fs::write(contacts_path(dir), existing).context("writing contacts")?;
+    store(dir)?.add_contact(name, signing, ecdh, hybrid)?;
     println!("contact `{name}` added");
     Ok(())
 }
@@ -488,21 +350,11 @@ fn contact_add(
 type Contact = (String, [u8; 32], [u8; 32], Option<Vec<u8>>);
 
 fn load_contacts(dir: &Path) -> Result<Vec<Contact>> {
-    let text = fs::read_to_string(contacts_path(dir)).unwrap_or_default();
-    let mut out = Vec::new();
-    for line in text.lines() {
-        let mut parts = line.split_whitespace();
-        let (Some(name), Some(signing), Some(ecdh)) = (parts.next(), parts.next(), parts.next())
-        else {
-            continue;
-        };
-        let hybrid = match parts.next() {
-            Some("-") | None => None,
-            Some(value) => Some(hex::decode(value).context("decoding hybrid contact key")?),
-        };
-        out.push((name.to_owned(), hex32(signing)?, hex32(ecdh)?, hybrid));
-    }
-    Ok(out)
+    Ok(store(dir)?
+        .contacts()?
+        .into_iter()
+        .map(|contact| (contact.name, contact.signing, contact.ecdh, contact.hybrid))
+        .collect())
 }
 
 fn contact_list(dir: &Path) -> Result<()> {
@@ -551,14 +403,6 @@ fn drop_path(dir: &Path, id: &DropId) -> PathBuf {
     drops_dir(dir).join(format!("{}.signed", id.to_hex()))
 }
 
-/// The result of creating a drop.
-struct CreatedDrop {
-    id: DropId,
-    cell: String,
-    chunks: u32,
-    bytes: usize,
-}
-
 fn drop_create(
     dir: &Path,
     to: &[String],
@@ -570,33 +414,7 @@ fn drop_create(
     file: Option<PathBuf>,
     ttl: u64,
     suite: &str,
-) -> Result<CreatedDrop> {
-    let identity = load_identity(dir)?;
-    let contacts = load_contacts(dir)?;
-
-    let hybrid_mode = suite.eq_ignore_ascii_case("hybrid");
-    if !hybrid_mode && !suite.eq_ignore_ascii_case("classical") {
-        bail!("unknown suite `{suite}` (expected `classical` or `hybrid`)");
-    }
-
-    // Resolve every recipient device (multi-recipient + multi-device).
-    let mut recipients = Vec::new();
-    for name in to {
-        let matching: Vec<_> = contacts
-            .iter()
-            .filter(|(contact, _, _, _)| contact == name)
-            .collect();
-        if matching.is_empty() {
-            bail!("unknown contact `{name}`; add them with `contact-add`");
-        }
-        for (_, _, ecdh, hybrid) in matching {
-            if hybrid_mode && hybrid.is_none() {
-                bail!("a device for `{name}` has no hybrid key; re-add it with a hybrid key");
-            }
-            recipients.push((*ecdh, hybrid.clone()));
-        }
-    }
-
+) -> Result<keepstone_store::CreatedDrop> {
     let plaintext = match (message, file) {
         (Some(message), None) => message.into_bytes(),
         (None, Some(path)) => {
@@ -605,174 +423,14 @@ fn drop_create(
         (None, None) => bail!("provide --message or --file"),
         (Some(_), Some(_)) => bail!("provide only one of --message or --file"),
     };
-
-    // Per-drop content key — the actual lock.
-    let mut content_key = [0u8; 32];
-    OsRng.fill_bytes(&mut content_key);
-
-    // Chunked, authenticated encryption.
-    let (framing, chunks) = stream::encrypt(&content_key, &plaintext)?;
-    let root = content_root(&chunks);
-
-    // Per-drop nonce binds recipient tags to this drop only.
-    let mut drop_nonce = [0u8; 16];
-    OsRng.fill_bytes(&mut drop_nonce);
-
-    // Seal the content key to each recipient, located by a short tag.
-    let suite_id = if hybrid_mode {
-        CryptoSuite::Hybrid25519MlKem768.id()
-    } else {
-        CryptoSuite::Classical25519.id()
-    };
-    let mut wrapped_keys = Vec::with_capacity(recipients.len().max(MIN_TAGS));
-    for (ecdh, hybrid) in &recipients {
-        let sealed = if hybrid_mode {
-            let public = hybrid_public_from_bytes(
-                hybrid
-                    .as_ref()
-                    .ok_or_else(|| anyhow!("a recipient has no hybrid key"))?,
-            )?;
-            SealedContentKey::Hybrid(keepstone_crypto::hybrid::seal(&content_key, &public)?)
-        } else {
-            SealedContentKey::Classical(SealedKey::seal(&content_key, ecdh)?)
-        };
-        let tag = derive_tag(ecdh, &drop_nonce)?;
-        wrapped_keys.push(WrappedKey { tag, sealed });
-    }
-
-    // Pad with decoys so the recipient count is not revealed in the clear.
-    let mut rng = OsRng;
-    while wrapped_keys.len() < MIN_TAGS {
-        let mut decoy_tag = [0u8; 8];
-        let mut ephemeral_public = [0u8; 32];
-        let mut nonce = [0u8; 24];
-        let mut ciphertext = vec![0u8; 48];
-        rng.fill_bytes(&mut decoy_tag);
-        rng.fill_bytes(&mut ephemeral_public);
-        rng.fill_bytes(&mut nonce);
-        rng.fill_bytes(&mut ciphertext);
-        wrapped_keys.push(WrappedKey {
-            tag: decoy_tag,
-            sealed: SealedContentKey::Classical(SealedKey {
-                ephemeral_public,
-                nonce,
-                ciphertext,
-            }),
-        });
-    }
-    wrapped_keys.shuffle(&mut rng);
-
-    let signer = identity.signing_public();
-    let pow_nonce = keepstone_core::pow::mine(&signer, &root, &drop_nonce);
-
-    let cell = CellId::from_lat_lng(lat, lng, res)?;
-    let now = SystemClock.now_unix();
-    let expiry = if ttl == 0 { 0 } else { now.saturating_add(ttl) };
-
-    let body = DropBody {
-        version: PROTOCOL_VERSION,
-        suite: suite_id,
-        cell: cell.to_hex(),
-        ring,
-        created_at: now,
-        expiry,
-        mode: Mode::Capability.id(),
-        chunk_size: u32::try_from(stream::DEFAULT_CHUNK_SIZE)?,
-        chunk_count: framing.total,
-        content_root: root,
-        prefix: framing.prefix,
-        drop_nonce,
-        pow_nonce,
-        wrapped_keys,
-    };
-
-    let signed = if hybrid_mode {
-        let ml_dsa = load_or_create_mldsa(dir)?;
-        SignedDrop::sign_hybrid(&identity, &ml_dsa, &body)?
-    } else {
-        SignedDrop::sign(&identity, &body)
-    };
-    let id = signed.id();
-
-    // Persist ciphertext chunks + the signed envelope.
-    let chunk_dir = chunks_dir(dir, &id);
-    fs::create_dir_all(&chunk_dir).with_context(|| format!("creating {}", chunk_dir.display()))?;
-    for (index, chunk) in chunks.iter().enumerate() {
-        fs::write(chunk_dir.join(format!("{index}.bin")), chunk).context("writing chunk")?;
-    }
-    fs::create_dir_all(drops_dir(dir)).ok();
-    fs::write(drop_path(dir, &id), &signed.raw).context("writing drop")?;
-
-    // Append to the local transparency log.
-    append_log_entry(dir, &signed.raw)?;
-
-    Ok(CreatedDrop {
-        id,
-        cell: cell.to_hex(),
-        chunks: framing.total,
-        bytes: plaintext.len(),
-    })
-}
-
-fn load_chunks(dir: &Path, id: &DropId, count: u32) -> Result<Vec<Vec<u8>>> {
-    let chunk_dir = chunks_dir(dir, id);
-    let mut chunks = Vec::with_capacity(count as usize);
-    for index in 0..count {
-        let path = chunk_dir.join(format!("{index}.bin"));
-        chunks.push(fs::read(&path).with_context(|| format!("reading {}", path.display()))?);
-    }
-    Ok(chunks)
+    Ok(store(dir)?.create_drop(to, lat, lng, res, ring, ttl, suite, &plaintext)?)
 }
 
 fn drop_open(dir: &Path, id_text: &str, out: Option<&Path>) -> Result<()> {
-    let identity = load_identity(dir)?;
     let id = DropId::from_hex(id_text)?;
-    let raw = fs::read(drop_path(dir, &id)).with_context(|| format!("no such drop: {id_text}"))?;
-    let signed = SignedDrop::decode(&raw)?;
-    signed.verify().context("drop signature invalid")?;
-    let body = signed.body()?;
-    if !body.pow_ok(&signed.signer) {
-        bail!("drop proof-of-work invalid");
-    }
-
-    let our_tag = derive_tag(&identity.ecdh_public(), &body.drop_nonce)?;
-    let ecdh_secret = identity.ecdh_secret_bytes();
-    let mut hybrid: Option<HybridKeypair> = None;
-    let mut unsealed = None;
-    for wrapped in &body.wrapped_keys {
-        if wrapped.tag != our_tag {
-            continue;
-        }
-        match &wrapped.sealed {
-            SealedContentKey::Classical(sealed) => {
-                if let Ok(key) = sealed.open(&ecdh_secret) {
-                    unsealed = Some(key);
-                    break;
-                }
-            }
-            SealedContentKey::Hybrid(sealed) => {
-                if hybrid.is_none() {
-                    hybrid = Some(load_hybrid(dir)?);
-                }
-                if let Some(keypair) = hybrid.as_ref() {
-                    if let Ok(key) = keypair.open(sealed) {
-                        unsealed = Some(key);
-                        break;
-                    }
-                }
-            }
-        }
-    }
-    let content_key =
-        unsealed.ok_or_else(|| anyhow!("this drop is not addressed to this device"))?;
-
-    let chunks = load_chunks(dir, &id, body.chunk_count)?;
-    let framing = stream::Framing {
-        prefix: body.prefix,
-        total: body.chunk_count,
-    };
-    let plaintext = stream::decrypt(&content_key, &framing, &chunks)
-        .context("decryption failed (wrong key or corrupted chunks)")?;
+    let plaintext = store(dir)?
+        .open_drop(&id)
+        .with_context(|| format!("opening {id_text}"))?;
 
     if let Some(path) = out {
         fs::write(path, &plaintext).with_context(|| format!("writing {}", path.display()))?;
@@ -786,51 +444,20 @@ fn drop_open(dir: &Path, id_text: &str, out: Option<&Path>) -> Result<()> {
 }
 
 fn drop_list(dir: &Path, lat: Option<f64>, lng: Option<f64>, ring: u32) -> Result<()> {
-    let entries = match fs::read_dir(drops_dir(dir)) {
-        Ok(entries) => entries,
-        Err(_) => {
-            println!("(no drops)");
-            return Ok(());
-        }
-    };
-
-    let mut rows = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("signed") {
-            continue;
-        }
-        let raw = fs::read(&path)?;
-        let Ok(signed) = SignedDrop::decode(&raw) else {
-            continue;
-        };
-        let id = signed.id();
-        let Ok(body) = signed.body() else {
-            continue;
-        };
-        if let (Some(lat), Some(lng)) = (lat, lng) {
-            let cell = CellId::parse_hex(&body.cell)?;
-            let ours = CellId::from_lat_lng(lat, lng, cell.resolution())?;
-            if !ours.ring(ring).contains(&cell) {
-                continue;
-            }
-        }
-        rows.push((id, body));
-    }
-
-    if rows.is_empty() {
+    let drops = store(dir)?.list_drops(lat.zip(lng), ring)?;
+    if drops.is_empty() {
         println!("(no drops)");
         return Ok(());
     }
-    for (id, body) in rows {
-        let expiry = if body.expiry == 0 {
+    for drop in drops {
+        let expiry = if drop.expiry == 0 {
             "never".to_owned()
         } else {
-            body.expiry.to_string()
+            drop.expiry.to_string()
         };
         println!(
-            "{id}  cell={} ring={} chunks={} created={} expiry={}",
-            body.cell, body.ring, body.chunk_count, body.created_at, expiry
+            "{}  cell={} ring={} chunks={} created={} expiry={}",
+            drop.id, drop.cell, drop.ring, drop.chunks, drop.created, expiry
         );
     }
     Ok(())
@@ -844,102 +471,53 @@ fn log_dir(dir: &Path) -> PathBuf {
     dir.join("log")
 }
 
-fn log_entries_path(dir: &Path) -> PathBuf {
-    log_dir(dir).join("entries.bin")
-}
-
 fn append_log_entry(dir: &Path, raw: &[u8]) -> Result<()> {
-    use std::io::Write as _;
-    fs::create_dir_all(log_dir(dir)).context("creating log dir")?;
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_entries_path(dir))
-        .context("opening log")?;
-    file.write_all(&u32::try_from(raw.len())?.to_be_bytes())?;
-    file.write_all(raw)?;
-    Ok(())
+    Ok(store(dir)?.append_log_entry(raw)?)
 }
 
 fn load_log_entries(dir: &Path) -> Result<Vec<Vec<u8>>> {
-    let bytes = match fs::read(log_entries_path(dir)) {
-        Ok(bytes) => bytes,
-        Err(_) => return Ok(Vec::new()),
-    };
-    let mut entries = Vec::new();
-    let mut cursor = 0usize;
-    while cursor + 4 <= bytes.len() {
-        let mut len_bytes = [0u8; 4];
-        len_bytes.copy_from_slice(&bytes[cursor..cursor + 4]);
-        cursor += 4;
-        let len = u32::from_be_bytes(len_bytes) as usize;
-        if cursor + len > bytes.len() {
-            break;
-        }
-        entries.push(bytes[cursor..cursor + len].to_vec());
-        cursor += len;
-    }
-    Ok(entries)
+    Ok(store(dir)?.log_entries()?)
 }
 
 fn log_identity(dir: &Path) -> Result<Identity> {
-    let path = log_dir(dir).join("key.txt");
-    if let Ok(text) = fs::read_to_string(&path) {
-        let mut lines = text.lines();
-        let signing = hex32(lines.next().ok_or_else(|| anyhow!("bad log key"))?)?;
-        let ecdh = hex32(lines.next().ok_or_else(|| anyhow!("bad log key"))?)?;
-        return Ok(Identity::from_secret_bytes(&signing, &ecdh));
-    }
-    let identity = Identity::generate();
-    fs::create_dir_all(log_dir(dir)).context("creating log dir")?;
-    fs::write(
-        &path,
-        format!(
-            "{}\n{}\n",
-            hex::encode(identity.signing_secret_bytes()),
-            hex::encode(identity.ecdh_secret_bytes())
-        ),
-    )?;
-    Ok(identity)
+    Ok(store(dir)?.log_identity()?)
 }
 
 fn log_verify(dir: &Path, id_text: &str) -> Result<()> {
     let id = DropId::from_hex(id_text)?;
-    let raw = fs::read(drop_path(dir, &id)).with_context(|| format!("no such drop: {id_text}"))?;
-    let signed = SignedDrop::decode(&raw)?;
-    signed.verify().context("drop signature invalid")?;
-    let body = signed.body()?;
-    if !body.pow_ok(&signed.signer) {
-        bail!("drop proof-of-work invalid");
-    }
+    let verification = store(dir)?
+        .verify(&id)
+        .with_context(|| format!("verifying {id_text}"))?;
 
-    let entries = load_log_entries(dir)?;
-    let leaves: Vec<merkle::Hash> = entries.iter().map(|e| merkle::leaf_hash(e)).collect();
-    let index = entries
-        .iter()
-        .position(|e| sha256(e) == *id.as_bytes())
-        .ok_or_else(|| anyhow!("drop is not present in the local log"))?;
-    let tree_size = leaves.len();
-    let root = merkle::mth(&leaves);
-    let proof = merkle::inclusion_proof(&leaves, index)?;
-    let included = merkle::verify_inclusion(&leaves[index], index, tree_size, &proof, &root);
-
-    let log = log_identity(dir)?;
-    let sth = SignedTreeHead::sign(&log, tree_size as u64, root, SystemClock.now_unix());
-    let sth_ok = sth.verify().is_ok();
-
-    let kind = if signed.sig_kind == keepstone_core::SIG_HYBRID {
+    let kind = if verification.sig_kind == keepstone_core::SIG_HYBRID {
         "hybrid (Ed25519 + ML-DSA-65)"
     } else {
         "Ed25519"
     };
-    println!("signature:   ok ({kind})");
-    println!("inclusion:   {}", if included { "ok" } else { "FAILED" });
-    println!("tree size:   {tree_size}");
-    println!("leaf index:  {index}");
-    println!("merkle root: {}", hex::encode(root));
-    println!("sth:         {}", if sth_ok { "ok" } else { "FAILED" });
-    if !included || !sth_ok {
+    println!(
+        "signature:   {} ({kind})",
+        if verification.signature {
+            "ok"
+        } else {
+            "FAILED"
+        }
+    );
+    println!(
+        "inclusion:   {}",
+        if verification.inclusion {
+            "ok"
+        } else {
+            "FAILED"
+        }
+    );
+    println!("tree size:   {}", verification.tree_size);
+    println!("leaf index:  {}", verification.leaf_index);
+    println!("merkle root: {}", hex::encode(verification.root));
+    println!(
+        "sth:         {}",
+        if verification.sth { "ok" } else { "FAILED" }
+    );
+    if !verification.signature || !verification.inclusion || !verification.sth {
         bail!("verification failed");
     }
     Ok(())

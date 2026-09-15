@@ -20,6 +20,7 @@ keepstone-crypto.workspace = true
 keepstone-log.workspace = true
 keepstone-node.workspace = true
 keepstone-p2p.workspace = true
+keepstone-store.workspace = true
 clap.workspace = true
 anyhow.workspace = true
 hex.workspace = true

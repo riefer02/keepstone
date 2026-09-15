@@ -1891,6 +1891,7 @@ dependencies = [
  "keepstone-log",
  "keepstone-node",
  "keepstone-p2p",
+ "keepstone-store",
  "rand 0.8.8",
  "serde_json",
  "tokio",
@@ -1938,6 +1939,7 @@ dependencies = [
  "keepstone-crypto",
  "keepstone-log",
  "keepstone-node",
+ "keepstone-store",
  "rand 0.8.8",
  "serde_json",
  "tokio",
@@ -1983,6 +1985,18 @@ name = "keepstone-relay"
 version = "0.0.1"
 dependencies = [
  "keepstone-core",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "keepstone-store"
+version = "0.0.1"
+dependencies = [
+ "hex",
+ "keepstone-core",
+ "keepstone-crypto",
+ "keepstone-log",
+ "rand 0.8.8",
  "thiserror 1.0.69",
 ]
 

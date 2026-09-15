@@ -1,0 +1,19 @@
+[package]
+name = "keepstone-store"
+description = "Shared data-directory operations for Keepstone clients (identity, contacts, drops, log)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+keepstone-core.workspace = true
+keepstone-crypto.workspace = true
+keepstone-log.workspace = true
+thiserror.workspace = true
+hex.workspace = true
+rand.workspace = true

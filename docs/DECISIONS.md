@@ -164,3 +164,18 @@ The daemon reuses the same crates and data-directory format as the CLI.
 is not a general-purpose HTTP server (no keep-alive, chunked encoding, or TLS);
 it is intended for `127.0.0.1` only. The daemon duplicates a little data-dir
 logic from the CLI; extracting a shared `keepstone-store` crate is a follow-up.
+
+## ADR-0013 — Shared `keepstone-store` library
+
+**Context.** The CLI and the browser-client daemon both implemented the same
+data-directory operations (identity, contacts, drops, log). The duplication had
+already caused drift and made both clients harder to maintain.
+
+**Decision.** Extract those operations into `keepstone-store`. Both clients open
+a `Store` over their data directory and call it; the on-disk format is defined
+in exactly one place. Path helpers stay where they are cheap.
+
+**Consequences.** One implementation of create/open/list/verify, shared tests,
+and easier future clients (desktop, mobile). The daemon shrank substantially.
+The store is synchronous; async callers just call it directly (operations are
+short and local).

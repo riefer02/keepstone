@@ -75,15 +75,20 @@ daemon holds the local identity's keys.
 
 ```
 crates/
-├── crypto/   # X25519/Ed25519/XChaCha20/HKDF, sealed boxes, chunked AEAD
+├── crypto/   # X25519/Ed25519/ML-KEM/ML-DSA, sealed boxes, chunked AEAD
 ├── core/     # types, H3 addressing, canonical CBOR, signed drop envelopes
 ├── log/      # RFC 6962 Merkle tree, inclusion + consistency proofs, STHs
-├── node/     # clock/storage/transport traits + in-memory impls
+├── node/     # clock/storage/transport traits, peer protocol, reference TCP
+├── p2p/      # libp2p transport: QUIC/TCP, gossipsub, Kademlia
 ├── relay/    # untrusted ciphertext-only relay
-└── cli/      # the `keepstone` reference client
+├── store/    # shared data-directory operations (identity, contacts, drops, log)
+├── cli/      # the `keepstone` reference client
+└── daemon/   # local HTTP/JSON API + browser UI
 ```
 
 `crypto`, `core`, and `log` are pure (no I/O, no async) and `#![forbid(unsafe_code)]`.
+The CLI and daemon both build on `store`, so the on-disk format and the
+create/open/verify logic live in one place.
 
 ## Quickstart
 
