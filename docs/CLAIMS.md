@@ -27,4 +27,5 @@ updated as milestones land.
 | Delivery does not require the author online | Federated store-and-forward: `push` ciphertext to a relay, `fetch` later; the relay holds no keys | ✅ M5 |
 | Anyone can audit a log's head | `sth-serve` / `sth-fetch`: a peer retrieves and verifies a log's signed tree head; equivocation detection applies | ✅ M5 |
 | A normal person can use it | Local JSON API + browser UI (`keepstone-daemon`): create, list, open, verify against the local node | ✅ M5 |
+| It can be deployed | `deploy/` Dockerfile + compose: a relay and a browser client, one command; runs as non-root, generates an identity on first run | ✅ M5 |
 | Not audited | — | ⚠️ No independent audit yet |

@@ -1,0 +1,32 @@
+# Relay + browser client, one command.
+#
+#   docker compose -f deploy/docker-compose.yml up --build
+#
+# Then open http://127.0.0.1:8787 and push drops to the relay at
+# 127.0.0.1:7777.
+services:
+  relay:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command:
+      ["keepstone", "--data-dir", "/data", "serve", "--listen", "0.0.0.0:7777"]
+    ports:
+      - "7777:7777"
+    volumes:
+      - relay-data:/data
+
+  daemon:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command:
+      ["keepstone-daemon", "--data-dir", "/data", "--listen", "0.0.0.0:8787"]
+    ports:
+      - "8787:8787"
+    volumes:
+      - daemon-data:/data
+
+volumes:
+  relay-data:
+  daemon-data:
