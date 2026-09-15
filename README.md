@@ -18,7 +18,7 @@ the confidentiality guarantee.**
 - **M4 (verifiability & hardening):** property-based tests; **fuzzing** (`cargo-fuzz` harnesses for drop, protocol, and presence decoders — ~30M executions, no crashes); **external anchoring** of signed tree heads behind an `Anchor` trait (`log-anchor` / `log-anchors`); **criterion benchmarks** (`docs/BENCHMARKS.md`).
 - **M5 (in progress):** post-quantum **hybrid key encapsulation** *and* **hybrid signatures** **wired end-to-end**; **multi-recipient and multi-device** drops; **federated relays**, **STH gossip**, a **browser client** (`keepstone-daemon`), a **standalone verifier**, and a **Docker deployment kit**.
 
-The test suite currently passes **99 tests** covering AEAD, sealed boxes,
+The test suite currently passes **100 tests** covering AEAD, sealed boxes,
 chunked streaming encryption, canonical CBOR, signing/verification, H3
 addressing, Merkle inclusion + consistency proofs, the peer protocol,
 two-node TCP exchange, **two-node libp2p (QUIC + TCP) exchange**, **gossipsub
