@@ -9,6 +9,9 @@ It is built in Rust as both a serious learning project and a genuine
 privacy tool: **the recipient key is the lock; location is an access gate, never
 the confidentiality guarantee.**
 
+> 📖 **New here?** Read [**The Keepstone Book**](docs/book/README.md) — a guided,
+> chapter-by-chapter tour of what it is and how it works.
+
 ## Status
 
 - **M0 (foundations):** complete — crypto core, canonical encoding, RFC 6962 log, workspace lints + CI.
