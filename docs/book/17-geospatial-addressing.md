@@ -1,19 +1,19 @@
 # 17. Geospatial addressing
 
-Keepstone doesn't use raw latitude/longitude. It uses **H3**, a hierarchical
-hexagonal grid that tiles the whole planet. An address is a **cell index**, a
-64-bit integer shown as hex (e.g. `8928308280fffff`).
+Keepstone addresses places with **H3**, a hierarchical hexagonal grid. An
+address is a **cell index**, a 64-bit integer shown as hex (e.g.
+`8928308280fffff`).
 
 ## Why hexagons
 
-Hexagons tile a sphere with fewer distortion artefacts than lat/lng rectangles,
-have a uniform neighbour relationship (every hexagon has 6 edge-neighbours), and
-nest cleanly: a coarse cell contains exactly seven finer ones. That makes
-"nearby" and "resolution" natural operations instead of awkward ones.
+They tile a sphere with fewer distortion artefacts than lat/lng rectangles, have
+a uniform neighbour relationship (6 edge-neighbours), and nest cleanly (a coarse
+cell contains exactly seven finer ones). "Nearby" and "resolution" become
+natural operations.
 
-## Resolution: how big is a cell
+## Resolution — cell size
 
-Resolution runs **0–15**. Coarser means bigger. Approximate average areas:
+Resolution runs **0–15**; coarser is bigger.
 
 | Resolution | Average cell area | Feels like |
 |---|---|---|
@@ -22,61 +22,54 @@ Resolution runs **0–15**. Coarser means bigger. Approximate average areas:
 | 9 | ~0.105 km² | a park / city block |
 | 11 | ~0.00215 km² | a building / plaza |
 
-Keepstone's default is **9** — in the low-hundreds-of-metres range, small enough
-that "being there" is meaningful, large enough to be forgiving of GPS noise.
+Default is **9** — hundreds of metres, small enough that "being there" means
+something, large enough to tolerate GPS noise.
 
-## The operations (`crates/core/src/address.rs`)
+## Operations
 
 ```
-CellId::from_lat_lng(lat, lng, resolution)   // which cell contains this point
-CellId::parse_hex("8928308280fffff")         // parse an address
-cell.to_hex()                                // render it
+CellId::from_lat_lng(lat, lng, resolution)   // cell containing a point
+CellId::parse_hex("8928308280fffff")         // parse
+cell.to_hex()                                // render
 cell.resolution()                            // 0..=15
 cell.ring(k)                                 // all cells within grid distance k
 ```
 
-`ring(k)` is H3's **grid disk**: every cell within `k` steps of the centre,
-including the centre itself. For `k = 1` that's 7 cells.
+`ring(k)` is H3's **grid disk**: every cell within `k` steps, including the
+centre. `k = 1` is 7 cells.
 
 ```
-        k = 0            k = 1                     k = 2
-         ┌─┐          ⬡ ⬡ ⬡                    ⬡ ⬡ ⬡ ⬡ ⬡
-         │C│         ⬡ ⬡ C ⬡                  ⬡ ⬡ ⬡ ⬡ ⬡ ⬡ ⬡
-         └─┘          ⬡ ⬡ ⬡                    ⬡ ⬡ ⬡ ⬡ ⬡ ⬡ ⬡
-        (1 cell)      (7 cells)                ⬡ ⬡ ⬡ ⬡ ⬡ ⬡ ⬡
-                                               (19 cells)
+        k = 0            k = 1                 k = 2
+         ┌─┐          ⬡ ⬡ ⬡                ⬡ ⬡ ⬡ ⬡ ⬡
+         │C│         ⬡ ⬡ C ⬡              ⬡ ⬡ ⬡ ⬡ ⬡ ⬡ ⬡
+         └─┘          ⬡ ⬡ ⬡                ⬡ ⬡ ⬡ ⬡ ⬡ ⬡ ⬡
+        (1 cell)      (7 cells)            ⬡ ⬡ ⬡ ⬡ ⬡ ⬡ ⬡
+                                            (19 cells)
 ```
 
-## Ring as a *delivery* concept, not an access concept
+## Ring is delivery, not access
 
-A drop stores `cell` (the exact place) and `ring` (how wide the "near" halo is).
-The ring is used for **delivery and discovery**:
+A drop stores `cell` (the place) and `ring` (the "near" halo). The ring is used
+for **delivery and discovery**:
 
-- dense cells: peers subscribe to gossipsub topics per cell, so a drop reaches
-  whoever is listening in that neighbourhood;
-- sparse cells: a provider advertises the cell, and a would-be recipient queries
-  the k-ring (k-anonymously — [Chapter 23](23-query-privacy.md));
-- listing: `drop-list --lat --lng --ring` filters to drops whose cell is inside
-  your k-ring.
+- dense cells: peers subscribe to gossipsub topics per cell;
+- sparse cells: a provider advertises the cell; a seeker queries the k-ring
+  k-anonymously ([Chapter 23](23-query-privacy.md));
+- listing: `drop-list --lat --lng --ring` filters to drops inside your k-ring.
 
-The ring does **not** gate reading. The recipient key does that, always.
+The ring does **not** gate reading. The recipient key does.
 
 ## Location is access, not discovery
 
-There is deliberately **no global spatial index**. You cannot enumerate all
-drops in a region. The author must communicate the place out of band
-([ADR-0005](../DECISIONS.md)). Consequences:
-
-- no opportunistic scanning of "what's near me",
-- a large class of metadata leakage simply doesn't exist,
-- at the cost of out-of-band coordination (which a dead drop always required).
+There is **no global spatial index** — you cannot enumerate drops in a region.
+The author communicates the place out of band ([ADR-0005](../DECISIONS.md)).
+That removes "what's near me" scanning and a class of metadata leakage, at the
+cost of out-of-band coordination.
 
 ## Resolution is a privacy knob
 
-Coarser cells mean more plausible deniability (you're "somewhere in the city")
-but vaguer placement; finer cells mean precise placement but more location
-leakage if the cell is observed. Resolution is chosen per drop, so an organizer
-can be loose and a private sender can be vague.
+Coarser cells mean more plausible deniability and vaguer placement; finer cells
+mean precise placement and more leakage if observed. It's chosen per drop.
 
 ## Go look at this
 

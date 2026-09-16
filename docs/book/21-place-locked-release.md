@@ -1,21 +1,18 @@
 # 21. Place-locked release
 
-Everything so far protects *who* can read a drop. Place-locked mode adds a
-gate on *when and where* the content key is released: the key is split across
-cell custodians and only reassembled when a claimant proves presence. It is
-best-effort defense in depth, and the design says so out loud.
+Earlier chapters protect *who* can read a drop. Place-locked mode gates *when and
+where* the content key is released: the key is split across cell custodians and
+reassembled only for a claimant who proves presence. Best-effort defense in
+depth, stated as such.
 
 ## The two pieces
 
-1. **Presence certificates** — evidence, signed by independent witnesses, that
+1. **Presence certificates** — signed evidence, from independent witnesses, that
    a claimant was near a cell at a time.
-2. **Shamir custodians** — the content key is `t`-of-`n` split; each custodian
-   releases its share only for a valid presence certificate.
+2. **Shamir custodians** — the key is `t`-of-`n` split; each custodian releases
+   its share only for a valid certificate.
 
-Together: no single party can unlock the drop, and the key material only becomes
-available to someone who showed up.
-
-## Presence: request and attestation
+## Presence
 
 ```
 PresenceRequest     = [ cell:text, nonce:bytes(16), claimant:bytes(32), expiry:uint ]
@@ -30,42 +27,36 @@ PresenceAttestation = [ cell, nonce, claimant, rtt_bucket, timestamp,
 
 A claimant broadcasts a request with a fresh `nonce`. Each nearby **witness**
 signs an attestation over `attestation_input`, including their measured
-`rtt_bucket` (a coarse round-trip-time bucket) and a timestamp. The claimant
-collects attestations into a `PresenceCert`.
+`rtt_bucket` and a timestamp. The claimant collects them into a `PresenceCert`.
 
-Networked collection is available over both transports:
-
-- reference TCP: `serve_witness` (server side) and `request_presence` (client),
-- libp2p: `serve_witness_cell` / `request_presence`.
+Networked collection: reference TCP (`serve_witness` / `request_presence`) and
+libp2p (`serve_witness_cell` / `request_presence`).
 
 ## What makes a certificate valid
 
-`PresenceCert::verify(threshold)` — or `verify_at(threshold, now)` to also check
-expiry against a supplied clock — checks all of:
+`PresenceCert::verify(threshold)`, or `verify_at(threshold, now)` to also check
+expiry, checks all of:
 
-1. **Every attestation matches the request** (same cell, nonce, claimant) — you
-   can't replay an attestation from a different request.
-2. **Each witness signature verifies** against that witness's key.
-3. **Witnesses are distinct** — one witness can't count three times.
-4. **The count meets the threshold** (`DEFAULT_THRESHOLD = 3`).
-5. **The certificate hasn't expired.**
+1. every attestation matches the request (cell, nonce, claimant) — no replay
+   across requests,
+2. each witness signature verifies,
+3. witnesses are **distinct** — one witness can't count thrice,
+4. the count meets the threshold (`DEFAULT_THRESHOLD = 3`),
+5. the certificate hasn't expired.
 
-Fail any one and the certificate is rejected.
+Fail any one and it's rejected.
 
 ## Release via custodians
 
-The content key `K` is split `t`-of-`n` (Shamir over GF(256),
-[Chapter 18](18-multi-recipient-and-shamir.md)). Each share is sealed to a
-different custodian (`crates/core/src/place.rs`, `seal`/`open`). A custodian
-releases its share only when presented a valid `PresenceCert`.
+The content key is split `t`-of-`n` ([Chapter 18](18-multi-recipient-and-shamir.md));
+each share is sealed to a custodian ([`place.rs`](../../crates/core/src/place.rs),
+`seal`/`open`). A custodian releases its share only for a valid `PresenceCert`.
 
 ```
    claimant ──PresenceRequest──▶ witnesses ──attestations──▶ PresenceCert
                                                                   │
-                                                                  ▼
                                              custodian 1..n: verify cert, release share
                                                                   │
-                                                                  ▼
                                                      any t shares reconstruct K
 ```
 
@@ -73,15 +64,14 @@ releases its share only when presented a valid `PresenceCert`.
 
 This is **defense in depth, not proof of location**:
 
-- **GPS can be spoofed.** A determined attacker can fake coordinates.
-- **Witnesses can be Sybil.** A well-resourced attacker can run many witnesses
-  and manufacture a certificate.
+- **GPS can be spoofed.**
+- **Witnesses can be Sybil** — a resourced attacker can manufacture a
+  certificate.
 - `rtt_bucket` is a coarse signal, not a cryptographic distance bound.
 
-The design treats place-locking as **friction and a second lock**, never as the
-confidentiality guarantee. That guarantee remains the recipient's key. This is
-stated in the threat model and repeated here on purpose — it's the kind of claim
-that projects oversell, and Keepstone refuses to.
+Place-locking is friction and a second lock, never the confidentiality
+guarantee. That guarantee remains the recipient's key. The threat model says so;
+so does this book, on purpose.
 
 ## Go look at this
 

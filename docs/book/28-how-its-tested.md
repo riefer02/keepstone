@@ -1,7 +1,6 @@
 # 28. How it's tested
 
-Testing is layered from cheap-and-broad (unit tests) to slow-and-thorough
-(property tests, fuzzing, benchmarks). Every layer earns its keep.
+Four layers, cheap-and-broad to slow-and-thorough.
 
 ## Unit and integration tests — 106 passing
 
@@ -11,44 +10,44 @@ cargo test -p keepstone-crypto
 cargo test --workspace merkle    # filter by name
 ```
 
-They cover: AEAD, sealed boxes, chunked streaming, canonical CBOR, sign/verify,
-H3 addressing, Merkle inclusion + consistency, the peer protocol, two-node TCP
-and two-node libp2p exchange, gossipsub delivery, Kademlia provider discovery,
-networked presence certificates (TCP and libp2p), hybrid encapsulation and
-signatures, Shamir, the place-locked flow, and the CLI hunt flow.
+Coverage: AEAD, sealed boxes, chunked streaming, canonical CBOR, sign/verify, H3,
+Merkle inclusion + consistency, the peer protocol, two-node TCP and libp2p
+exchange, gossipsub delivery, Kademlia provider discovery, networked presence
+(TCP and libp2p), hybrid encapsulation and signatures, Shamir, the place-locked
+flow, and the CLI hunt flow.
 
-Integration tests live in `crates/*/tests/`:
+Integration tests in `crates/*/tests/`:
 
 ```
-crates/cli/tests/hunt.rs            # multi-participant hunt end to end
+crates/cli/tests/hunt.rs            # multi-participant hunt
 crates/core/tests/place_locked.rs   # place-locked release
-crates/core/tests/properties.rs     # property tests (CBOR, etc.)
-crates/crypto/tests/properties.rs   # property tests (crypto)
-crates/log/tests/properties.rs      # property tests (Merkle)
+crates/core/tests/properties.rs     # CBOR property tests
+crates/crypto/tests/properties.rs   # crypto property tests
+crates/log/tests/properties.rs      # Merkle property tests
 crates/node/tests/presence_net.rs   # presence over the network
 crates/p2p/tests/{exchange,gossip,presence,providers}.rs
 ```
 
 ## Property-based tests
 
-`proptest` (in `crypto`, `core`, `log`) checks invariants over generated inputs
-rather than hand-picked cases:
+`proptest` in `crypto`, `core`, and `log` checks invariants over generated
+inputs:
 
-- encode → decode round-trips for canonical CBOR,
-- encrypt → decrypt round-trips for chunked streams,
-- Merkle inclusion proofs verify for random tree sizes and indices,
+- canonical CBOR encode → decode round-trips,
+- chunked encrypt → decrypt round-trips,
+- inclusion proofs verify for random sizes and indices,
 - consistency proofs hold between random prefix/suffix sizes,
 - tag derivation is stable and decoys fail authentication.
 
-These catch the "off by one at an unusual size" bugs that example tests miss.
+Catches the "off by one at an unusual size" bugs example tests miss.
 
 ## Fuzzing
 
-A detached `cargo-fuzz` project (`fuzz/`) hammer three decoders with arbitrary
+A detached `cargo-fuzz` project (`fuzz/`) hammers three decoders with arbitrary
 bytes:
 
 ```
-fuzz/fuzz_targets/drop_decode.rs       # envelope + body decoding
+fuzz/fuzz_targets/drop_decode.rs       # envelope + body
 fuzz/fuzz_targets/protocol_decode.rs   # peer protocol messages
 fuzz/fuzz_targets/presence_decode.rs   # presence certificates
 ```
@@ -59,26 +58,21 @@ cargo +nightly fuzz list
 cargo +nightly fuzz run drop       # or protocol / presence
 ```
 
-The goal is the parser invariant: **untrusted input must never crash or panic** —
-it must return an error. Roughly 30M executions have been run with no crashes.
-Corpus and any artifacts live under `fuzz/corpus/` and `fuzz/artifacts/`.
-
-This pairs with the canonical-CBOR rule: the decoder is where hostile bytes
-arrive, so it's where the fuzzer spends its time.
+Invariant: **untrusted input must never crash or panic** — it must return an
+error. ~30M executions, no crashes. Corpus and artifacts under `fuzz/corpus/`
+and `fuzz/artifacts/`. This pairs with the canonical-CBOR rule: the decoder is
+where hostile bytes arrive.
 
 ## Benchmarks
-
-`criterion` benchmarks quantify cost and catch regressions:
 
 ```bash
 cargo bench -p keepstone-crypto --bench crypto
 cargo bench -p keepstone-log --bench merkle
 ```
 
-Headline numbers (Apple Silicon, Rust 1.88) are in
-[`docs/BENCHMARKS.md`](../BENCHMARKS.md): ~656 MiB/s chunked AEAD, sub-µs
-inclusion *verification*, ~2 ms inclusion *generation* at 10k leaves (a known
-`O(n)` generation limitation, tracked as an optimization).
+Headline numbers in [`docs/BENCHMARKS.md`](../BENCHMARKS.md): ~656 MiB/s chunked
+AEAD, sub-µs inclusion *verification*, ~2 ms inclusion *generation* at 10k leaves
+(a tracked `O(n)` generation limitation).
 
 ## The gate
 
@@ -88,23 +82,21 @@ cargo xtask deny    # cargo-deny: licenses, advisories, bans
 cargo xtask demo    # end-to-end smoke test, prints PASS
 ```
 
-CI requires all three. `cargo-deny` (`deny.toml`) enforces the license policy
-and blocks known-vulnerable or duplicate-banned dependencies.
+CI requires all three; `deny.toml` encodes the license policy and blocks
+vulnerable or duplicate-banned dependencies.
 
 ## Why this shape
 
-- **Pure leaves** (`crypto`, `log`) get the heaviest scrutiny — property tests
-  and fuzzing — because that's where correctness is hardest and the code is
-  easiest to test (no I/O).
+- **Pure leaves** (`crypto`, `log`) get property tests and fuzzing — hardest
+  correctness, easiest testing.
 - **The protocol parser** gets a fuzzer because it consumes hostile bytes.
-- **End-to-end flows** get integration tests and one scripted demo so the whole
-  stack is exercised, not just its parts.
+- **End-to-end flows** get integration tests plus one scripted demo.
 
 ## Go look at this
 
-- [`xtask/src/main.rs`](../../xtask/src/main.rs) — the gate and demo
-- [`fuzz/fuzz_targets/`](../../fuzz/fuzz_targets/) — the fuzzers
-- [`docs/BENCHMARKS.md`](../BENCHMARKS.md) — numbers and methodology
-- [`deny.toml`](../../deny.toml) — the dependency policy
+- [`xtask/src/main.rs`](../../xtask/src/main.rs) — gate + demo
+- [`fuzz/fuzz_targets/`](../../fuzz/fuzz_targets/) — fuzzers
+- [`docs/BENCHMARKS.md`](../BENCHMARKS.md)
+- [`deny.toml`](../../deny.toml)
 
 Next: [Design decisions, digest](29-design-decisions.md)

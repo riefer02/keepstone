@@ -1,14 +1,8 @@
 # The Keepstone Book
 
-A guided tour of **what Keepstone is, what it does, and how it works** — written
-for a developer who has never seen the repo, and for the author six months from
-now who has forgotten every detail.
-
-It assumes you can read code and know roughly what a public key is. It does
-**not** assume any cryptography background: every idea is introduced in plain
-language before the real types and fields show up.
-
----
+What Keepstone is, what it does, and how it works. Written for a developer who
+has never seen the repo (and for the author who has forgotten the details). No
+cryptography background assumed.
 
 ## The one-sentence version
 
@@ -16,45 +10,35 @@ language before the real types and fields show up.
 > only when they're there.
 
 Keepstone is a decentralized, end-to-end-encrypted **geospatial dead-drop
-engine**. The **recipient's key is the lock**. The **location is an access
+engine**. The **recipient's key is the lock**; the **location is an access
 gate**, never the confidentiality guarantee.
 
----
+## Reading paths
 
-## How to read this book
-
-Each chapter is short and self-contained, and ends with a **Go look at this**
-block pointing at the exact source file(s) and the test that proves the
-behaviour. Read in order the first time; after that, jump around.
-
-Three reading paths:
-
-| If you want… | Read |
+| Goal | Read |
 |---|---|
-| **The idea, fast** (~20 min) | 01 → 02 → 03 → 12 → 25 |
-| **How to use it** (~40 min) | 05 → 06 → 07 → 08 → 09 → 10 → 11 |
-| **How it actually works** (the whole thing) | everything, in order |
+| The idea, fast (~20 min) | 01 → 02 → 03 → 12 → 25 |
+| How to use it (~40 min) | 05 → 06 → 07 → 08 → 09 → 10 → 11 |
+| How it works (whole book) | everything, in order |
+
+Every chapter ends with a **Go look at this** block pointing at the source file
+and the test that proves the behaviour.
 
 ## Conventions
 
-- `H(x)` means `SHA-256(x)`.
-- `||` means byte concatenation. All multi-byte integers on the wire are
-  **big-endian**.
+- `H(x)` = `SHA-256(x)`. `||` = byte concatenation. Wire integers are big-endian.
 - A **drop** is one encrypted message at one place. Its **id** is
   `H(exact transmitted bytes)`.
 - Diagrams are ASCII so they render anywhere.
-- "Go look at this" paths are relative to the repository root.
+- Paths in "Go look at this" are relative to the repo root.
 
 ## Accuracy
 
-Everything here is written against the code at the time of writing — 106 tests
-passing, all quality gates green. Where the code and this book could drift, the
-code wins. The authoritative documents are:
-
-- [`docs/SPEC.md`](../SPEC.md) — the wire format
-- [`docs/DECISIONS.md`](../DECISIONS.md) — 15 architecture decision records
-- [`docs/THREAT_MODEL.md`](../THREAT_MODEL.md) — what is and isn't guaranteed
-- [`docs/CLAIMS.md`](../CLAIMS.md) — every claim mapped to evidence
+Written against the code at the time of writing: 106 tests, all gates green.
+Where book and code disagree, the code wins. Authoritative docs:
+[`SPEC.md`](../SPEC.md) (wire format), [`DECISIONS.md`](../DECISIONS.md) (ADRs),
+[`THREAT_MODEL.md`](../THREAT_MODEL.md), [`CLAIMS.md`](../CLAIMS.md) (claim →
+evidence).
 
 ## Contents
 
@@ -77,7 +61,7 @@ code wins. The authoritative documents are:
 
 **Part III — How it works (the engine room)**
 
-12. [The workspace map](12-workspace-map.md)
+12. [Workspace map](12-workspace-map.md)
 13. [The cryptographic core](13-crypto-core.md)
 14. [Post-quantum, hybrid](14-post-quantum-hybrid.md)
 15. [Canonical CBOR and byte-preservation identity](15-canonical-cbor-and-identity.md)
@@ -91,7 +75,7 @@ code wins. The authoritative documents are:
 23. [Query privacy](23-query-privacy.md)
 24. [The store and the data directory](24-the-store-and-data-dir.md)
 
-**Part IV — Trust, operations, and the future**
+**Part IV — Trust, operations, future**
 
 25. [Security summary](25-security-summary.md)
 26. [Anchoring trust](26-anchoring-trust.md)

@@ -2,86 +2,68 @@
 
 ## The old idea
 
-In espionage, a **dead drop** is a hiding place where one person leaves
-something and another picks it up later. The two never meet. The hiding place —
-a loose brick, a hollow tree, a mark on a bench — is chosen in advance and
-communicated out of band.
+A **dead drop** is a hiding place where one person leaves something and another
+picks it up later. The two never meet. The spot — a loose brick, a hollow tree —
+is agreed in advance and communicated out of band.
 
-The beauty of a dead drop is that it decouples the two parties in **time and
-space**. The sender doesn't have to be present when the receiver arrives. There
-is no direct channel to intercept. If the spot is compromised, you lose that
-drop, not your whole network.
+Its value is decoupling the parties in **time and space**: the sender needn't be
+present when the receiver arrives, there's no direct channel to intercept, and
+compromising one drop doesn't compromise the network.
 
 ## The digital version, done badly
 
-Most digital "leave a message for later" systems are a server with a mailbox:
+Most "leave a message for later" systems are a server with a mailbox:
 
 ```
    sender ─────▶ [ server mailbox ] ─────▶ recipient
                         ▲
-                        │  reads everything,
-                        │  can delete it,
+                        │  reads everything, can delete it,
                         │  logs who/when/where
 ```
 
-The server is a single point of:
-- **confidentiality failure** (it sees plaintext, or holds the keys),
-- **availability failure** (it can be shut down or delete your message),
-- **metadata failure** (it knows who talks to whom, and when).
-
-Encrypting the message end-to-end fixes the first, but the second two remain.
-And the mailbox still needs addressing, which leaks.
+The server is a single point of confidentiality, availability, and metadata
+failure. End-to-end encryption fixes the first; the other two remain. The
+mailbox also still needs addressing, which leaks.
 
 ## Keepstone's twist: the hiding place is a real place
 
 Keepstone replaces the mailbox with a **geographic cell** — a small patch of the
-real world, addressed with an [H3](17-geospatial-addressing.md) index. A drop is
-encrypted content plus the cell it belongs to.
+world addressed by an [H3](17-geospatial-addressing.md) index.
 
 ```
    author ──▶ [ encrypted drop addressed to cell 8928308280fffff ]
-                        │
-                        │  relayed by anyone; readable by no one but the key
+                        │  relayed by anyone, readable by no one but the key
                         ▼
-              anyone near that cell can carry it
+              anyone near the cell can carry it
               only the recipient's key can open it
 ```
 
-Two things follow, and they are the whole design:
+Two consequences are the whole design:
 
-1. **Only the intended key can read it.** The content is encrypted to the
-   recipient's public key. Relays, log nodes, and network observers hold
-   ciphertext they cannot open.
-2. **Being near the place is how you find it — and how you're *allowed* to
-   find it.** There is no global "search all drops" index. The author tells the
-   recipient where to look. Location is an **access gate**, not a map you can
-   browse.
+1. **Only the intended key can read it.** Content is encrypted to the
+   recipient's public key; relays, logs, and observers hold ciphertext.
+2. **Proximity is how you find it — and how you're allowed to.** There is no
+   global "search all drops" index. The author tells the recipient where to
+   look.
 
-That second point is a deliberate choice with a name:
-[ADR-0005 — location is access, not discovery](../DECISIONS.md). It removes an
-entire class of abuse (no opportunistic scanning for drops near you) and a large
-amount of metadata leakage, at the cost of requiring out-of-band coordination —
-which is exactly what a dead drop always required anyway.
+The second is [ADR-0005 — location is access, not discovery](../DECISIONS.md).
+It removes opportunistic abuse and a class of metadata leakage, at the cost of
+out-of-band coordination — which a dead drop always required.
 
-## Why build this
+## Why build it
 
-- **It's a genuinely useful primitive.** "Leave something at a place for a
-  specific person, that no intermediary can read or erase" is not well served by
-  chat apps or file sync.
-- **It forces real engineering.** You cannot hand-wave storage/retrieval, so you
-  end up building a real transparency log, a real peer protocol, a real crypto
-  core — the things that make a portfolio project more than a CRUD app.
-- **The threat model is honest.** The crypto is the guarantee; the location is
-  friction and defense in depth. That distinction is stated everywhere, and
-  never oversold.
+- **Useful primitive:** "leave something at a place for a specific person, that
+  no intermediary can read or erase" is poorly served by chat or file sync.
+- **Real engineering:** it forces a crypto core, a transparency log, and a peer
+  protocol rather than CRUD.
+- **Honest threat model:** the crypto is the guarantee; location is friction and
+  defense in depth. Stated everywhere, never oversold.
 
 ## The shape of the system
 
-By the end of this book you'll recognize this picture:
-
 ```
    ┌──────────── identity ────────────┐
-   │  Ed25519 signing + X25519 ecdh   │   (the author's keys)
+   │  Ed25519 signing + X25519 ecdh   │
    └───────────────┬──────────────────┘
                    │  create
                    ▼
@@ -96,7 +78,7 @@ By the end of this book you'll recognize this picture:
    ┌──────── transport: TCP / libp2p(QUIC+TCP) ────────┐
    │  anyone carries ciphertext; nobody can read it     │
    └───────────────┬───────────────────────────────────┘
-                   │  fetch by id (or receive via cell topic)
+                   │  fetch by id, or receive via cell topic
                    ▼
    ┌──────── recipient ────────────────────────────────┐
    │  verify signature → match own tag → unseal key     │
@@ -104,13 +86,12 @@ By the end of this book you'll recognize this picture:
    └────────────────────────────────────────────────────┘
 ```
 
-Keep that picture in mind. The rest of Part I explains the *why* around it; Part
-III opens up each box.
+Part I explains the *why*; Part III opens each box.
 
 ## Go look at this
 
-- [`README.md`](../../README.md) — the one-paragraph pitch
+- [`README.md`](../../README.md) — the pitch
 - [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md) — the layered picture
-- [`docs/DECISIONS.md`](../DECISIONS.md) — ADR-0005, "location is access, not discovery"
+- [`docs/DECISIONS.md`](../DECISIONS.md) — ADR-0005
 
 Next: [What Keepstone is *not*](02-what-keepstone-is-not.md)

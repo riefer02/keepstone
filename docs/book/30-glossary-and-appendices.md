@@ -12,34 +12,34 @@
 | **Sealed box** | The content key encrypted to one recipient via ephemeral-static X25519 |
 | **Wrapped key** | A `tag` + a sealed content key (real or decoy) |
 | **Tag** | 8 bytes from `HKDF(recipient_public, drop_nonce)` locating a recipient's slot |
-| **Decoy** | A random wrapped-key slot padding every drop to ≥16 slots |
+| **Decoy** | Random wrapped-key slot padding every drop to ≥16 slots |
 | **Cell** | An H3 hexagonal address (hex), e.g. `8928308280fffff` |
-| **Ring** | The k-ring around a cell (`grid_disk`): the centre plus k layers of neighbours |
+| **Ring** | The k-ring around a cell (`grid_disk`): centre plus k neighbour layers |
 | **H3** | The hierarchical hexagonal geospatial index used for addressing |
-| **Suite** | A versioned set of algorithms (1 classical, 2 hybrid) |
-| **Hybrid** | Classical + post-quantum run together, sound if either holds |
-| **PoW** | Hashcash-style proof-of-work bound to signer + content (12 leading zero bits) |
+| **Suite** | A versioned algorithm set (1 classical, 2 hybrid) |
+| **Hybrid** | Classical + post-quantum together; sound if either holds |
+| **PoW** | Hashcash-style proof of work bound to signer + content (12 leading zero bits) |
 | **Log** | This node's append-only RFC 6962 Merkle log of envelope bytes |
 | **Leaf / node hash** | `H(0x00 || d)` / `H(0x01 || l || r)` (RFC 6962 domain separation) |
 | **MTH** | Merkle Tree Hash — the root over the log's leaves |
 | **Inclusion proof** | Evidence a leaf is in the tree (≈`log₂ n` hashes) |
 | **Consistency proof** | Evidence a smaller tree is a prefix of a larger one |
-| **STH** | Signed Tree Head: a log's signed `{size, root, time}`, 144 bytes encoded |
-| **Equivocation** | Two valid STHs with the same size but different roots — proof of misbehaviour |
+| **STH** | Signed Tree Head: signed `{size, root, time}`, 144 bytes encoded |
+| **Equivocation** | Two valid STHs, same size, different roots — proof of misbehaviour |
 | **Anchor** | A commitment to an STH outside the log (hash chain or OpenTimestamps) |
 | **OTS** | OpenTimestamps — Bitcoin-backed timestamps |
 | **Presence cert** | A request plus witness attestations proving (best-effort) presence |
 | **Custodian** | A holder of one Shamir share for a place-locked drop |
 | **Shamir** | `t`-of-`n` secret sharing over GF(256) |
-| **Gossipsub** | libp2p pub/sub; used for cell topics (dense cells) |
-| **Kademlia** | libp2p DHT; used for provider records (sparse cells) |
-| **k-anonymity** | Hiding your target among k plausible ones (here: a cell's ring) |
+| **Gossipsub** | libp2p pub/sub; cell topics (dense cells) |
+| **Kademlia** | libp2p DHT; provider records (sparse cells) |
+| **k-anonymity** | Hiding your target among k plausible ones (a cell's ring) |
 | **PIR** | Private Information Retrieval — the stronger goal we do **not** claim |
 | **Store** | `keepstone-store`, the shared data-directory library |
 
 ## Appendix A — CLI reference
 
-The binary is `keepstone`. Global option: `--data-dir <path>` (default
+Binary `keepstone`. Global option: `--data-dir <path>` (default
 `./.keepstone-data`).
 
 ```bash
@@ -115,7 +115,7 @@ libp2p:        same bytes, protocol "/keepstone/drop/1"
     └── anchors.txt   # anchor receipts
 ```
 
-## Appendix D — Constants worth knowing
+## Appendix D — Constants
 
 | Constant | Value | Where |
 |---|---|---|
@@ -134,12 +134,12 @@ libp2p:        same bytes, protocol "/keepstone/drop/1"
 
 ## Where to go next
 
-- **The wire format:** [`docs/SPEC.md`](../SPEC.md)
-- **The decisions:** [`docs/DECISIONS.md`](../DECISIONS.md)
-- **The guarantees:** [`docs/THREAT_MODEL.md`](../THREAT_MODEL.md)
-- **The evidence:** [`docs/CLAIMS.md`](../CLAIMS.md)
+- **Wire format:** [`docs/SPEC.md`](../SPEC.md)
+- **Decisions:** [`docs/DECISIONS.md`](../DECISIONS.md)
+- **Guarantees:** [`docs/THREAT_MODEL.md`](../THREAT_MODEL.md)
+- **Evidence:** [`docs/CLAIMS.md`](../CLAIMS.md)
 - **Running it:** [`docs/OPERATIONS.md`](../OPERATIONS.md)
-- **The event pilot:** [`docs/PILOT.md`](../PILOT.md)
+- **Event pilot:** [`docs/PILOT.md`](../PILOT.md)
 - **Performance:** [`docs/BENCHMARKS.md`](../BENCHMARKS.md)
 - **Abuse posture:** [`docs/ABUSE.md`](../ABUSE.md)
 
