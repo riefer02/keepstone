@@ -1,5 +1,5 @@
 # Build stage: compile the client and daemon.
-FROM rust:1.88-bookworm AS builder
+FROM rust:1.97-bookworm AS builder
 WORKDIR /src
 COPY . .
 RUN cargo build --release --locked -p keepstone-cli -p keepstone-daemon
