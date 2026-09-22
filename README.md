@@ -1,5 +1,8 @@
 # Keepstone
 
+[![CI](https://github.com/riefer02/keepstone/actions/workflows/ci.yml/badge.svg)](https://github.com/riefer02/keepstone/actions/workflows/ci.yml)
+[![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
+
 > Leave an encrypted message at a place. Only the person you choose can read it,
 > only when they're there. No server can read it, no company can delete it, and
 > anyone can verify it existed.
@@ -94,6 +97,11 @@ The CLI and daemon both build on `store`, so the on-disk format and the
 create/open/verify logic live in one place.
 
 ## Quickstart
+
+```bash
+git clone https://github.com/riefer02/keepstone.git
+cd keepstone
+```
 
 Run the whole stack with one command (identities → post-quantum drop → relay → fetch → open → verify):
 

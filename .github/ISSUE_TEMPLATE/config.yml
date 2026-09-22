@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/riefer02/keepstone/security/advisories/new
+    about: Privately report a vulnerability. Please do not open a public issue.
+  - name: Read The Keepstone Book
+    url: https://github.com/riefer02/keepstone/blob/main/docs/book/README.md
+    about: A guided tour of what Keepstone is and how it works.
+  - name: Questions and ideas
+    url: https://github.com/riefer02/keepstone/discussions
+    about: Ask a question or discuss a design idea (enable Discussions in repo settings).

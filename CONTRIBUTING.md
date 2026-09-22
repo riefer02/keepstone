@@ -11,7 +11,8 @@ future; without it, that option is permanently lost.
 
 ### Contributor License Agreement (summary)
 
-By contributing, you certify that:
+By opening a pull request or otherwise submitting a contribution, you accept
+this agreement and certify that:
 
 1. You created the contribution, or have the right to submit it.
 2. You grant the project a perpetual, worldwide, non-exclusive, royalty-free,
@@ -19,7 +20,8 @@ By contributing, you certify that:
    contribution under the AGPL-3.0-or-later and under other licenses.
 3. Your contribution is provided "as is", without warranty.
 
-(Replace this summary with a full CLA text before accepting external PRs.)
+The project may ask you to confirm this agreement (for example, via a CLA bot)
+before a pull request can be merged.
 
 ## Development
 

@@ -1,0 +1,40 @@
+name: Feature request
+description: Propose a new capability or an improvement.
+title: "[feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before proposing a change to the protocol or cryptography, please check
+        [docs/DECISIONS.md](https://github.com/riefer02/keepstone/blob/main/docs/DECISIONS.md)
+        and [docs/CLAIMS.md](https://github.com/riefer02/keepstone/blob/main/docs/CLAIMS.md).
+        New cryptographic choices require an ADR.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the use case or limitation. Focus on the problem, not the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would you like to see? Include alternatives you considered.
+    validations:
+      required: false
+  - type: textarea
+    id: security
+    attributes:
+      label: Security / threat-model impact
+      description: Does this change the guarantees in docs/THREAT_MODEL.md? Does it touch cryptography or the wire format?
+    validations:
+      required: false
+  - type: checkboxes
+    id: willing
+    attributes:
+      label: Contribution
+      options:
+        - label: I'm willing to open a pull request for this.
+          required: false
