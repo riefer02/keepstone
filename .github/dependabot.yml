@@ -1,5 +1,9 @@
 # Dependabot configuration.
 # https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+#
+# Keepstone pins its Rust toolchain to the MSRV (see rust-toolchain.toml and
+# Cargo.toml `rust-version`). Cargo majors frequently raise the required rustc,
+# so we only auto-propose minor/patch bumps and bump majors by hand.
 version: 2
 updates:
   - package-ecosystem: cargo
@@ -10,12 +14,23 @@ updates:
     groups:
       cargo:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: cargo
     directory: "/fuzz"
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      cargo-fuzz:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: "/"
@@ -24,6 +39,9 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+    ignore:
+      # The toolchain version is the MSRV, not a floating dependency.
+      - dependency-name: "dtolnay/rust-toolchain"
 
   - package-ecosystem: docker
     directory: "/deploy"
