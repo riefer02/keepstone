@@ -38,7 +38,7 @@ zeroize = { version = "1", features = ["derive"] }
 subtle = "2"
 rand = "0.8"
 ed25519-dalek = { version = "2", features = ["rand_core", "zeroize"] }
-x25519-dalek = { version = "2", features = ["static_secrets", "zeroize"] }
+x25519-dalek = { version = "3", features = ["static_secrets", "zeroize"] }
 h3o = "0.7"
 hex = "0.4"
 clap = { version = "4", features = ["derive", "env"] }
